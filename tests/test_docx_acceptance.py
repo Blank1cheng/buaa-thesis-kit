@@ -5,7 +5,7 @@ from docx import Document
 from docx.shared import Inches
 
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
-from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
+from buaa_thesis_kit.models import ContentBlock, EquationItem, Metadata, ThesisModel
 from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 
 
@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "templates" / "buaa_undergraduate_thesis_template.docx"
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+OMML_FRAGMENT = (
+    '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+    "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
+    "</m:oMathPara>"
 )
 
 
@@ -173,3 +178,40 @@ def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     assert result.editability["paragraph_count"] > 0
     assert result.editability["page_screenshot_drawing_count"] == 0
     assert any("editable Word validation passed" in note for note in result.notes)
+
+
+def test_inspect_docx_output_reports_editable_omml_equation_count(tmp_path):
+    output = tmp_path / "editable-equation.docx"
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Equation Thesis",
+            student_id="20370001",
+            student_name="Zhang San",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-07",
+            classification="TN953",
+        ),
+        sections=[ContentBlock(id="section-1", type="section", text="Editable body text.")],
+        equations=[
+            EquationItem(
+                id="eq-1",
+                kind="omml",
+                text="x+y",
+                omml=OMML_FRAGMENT,
+                requires_review=False,
+            )
+        ],
+    )
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    result = inspect_docx_output(
+        output,
+        model.metadata,
+        source_kind="docx",
+        require_spine=True,
+    )
+
+    assert result.blocking_items == []
+    assert result.editability["omml_equation_count"] == 1

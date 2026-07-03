@@ -63,6 +63,7 @@ def inspect_docx_output(
         "table_count": len(document.tables),
         "drawing_count": package_info["drawing_count"],
         "page_screenshot_drawing_count": package_info["page_screenshot_drawing_count"],
+        "omml_equation_count": package_info["omml_equation_count"],
         "media_count": package_info["media_count"],
         "body_snippet_count": len(body_snippets),
         "body_snippet_hits": body_snippet_hits,
@@ -181,7 +182,15 @@ def _inspect_docx_package(path: Path) -> dict[str, int]:
         "page_screenshot_drawing_count": sum(
             1 for width, height in drawing_sizes if _looks_like_page_screenshot(width, height)
         ),
+        "omml_equation_count": _omml_equation_count(document_xml),
     }
+
+
+def _omml_equation_count(document_xml: str) -> int:
+    omath_para_count = len(re.findall(r"<m:oMathPara\b", document_xml))
+    if omath_para_count:
+        return omath_para_count
+    return len(re.findall(r"<m:oMath\b", document_xml))
 
 
 def _drawing_sizes(document_xml: str) -> list[tuple[float, float]]:

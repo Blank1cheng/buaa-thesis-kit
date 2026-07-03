@@ -260,7 +260,7 @@ def test_extract_text_pdf_promotes_stacked_caption_table_to_editable_table(tmp_p
     assert "Table 2.1 analysis" in combined_sections
 
 
-def test_extract_text_pdf_detects_equation_lines_for_review_ledger(tmp_path):
+def test_extract_text_pdf_converts_safe_equation_lines_to_editable_omml(tmp_path):
     source = tmp_path / "source-with-equation.pdf"
     work = tmp_path / "work"
     _write_text_pdf_with_equation(source)
@@ -273,7 +273,11 @@ def test_extract_text_pdf_detects_equation_lines_for_review_ledger(tmp_path):
     assert equation.text == "x_k = F x_{k-1} + w_k (2.1)"
     assert equation.latex == "x_k = F x_{k-1} + w_k"
     assert equation.number == "(2.1)"
-    assert equation.requires_review is True
+    assert equation.requires_review is False
+    assert "<m:oMathPara" in equation.omml
+    assert "<m:sSub>" in equation.omml
+    assert "<m:t>x</m:t>" in equation.omml
+    assert "<m:t>k-1</m:t>" in equation.omml
     assert equation.source is not None
     assert equation.source.method == "pdf-equation-text"
     combined_sections = "\n".join(section.text for section in model.sections)

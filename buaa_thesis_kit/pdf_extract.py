@@ -17,6 +17,7 @@ from buaa_thesis_kit.models import (
     SourceEvidence,
     ThesisModel,
 )
+from buaa_thesis_kit.latex_to_omml import latex_to_omml
 
 
 SOURCE_PDF_NAME = "source.pdf"
@@ -209,7 +210,7 @@ def extract_pdf_model(
             model.extraction_warnings.append(
                 "PDF tabular text converted to editable tables; structure requires review."
             )
-        if model.equations:
+        if any(equation.requires_review for equation in model.equations):
             model.extraction_warnings.append(
                 "PDF equation-like text extracted for equation ledger; editable Word equation conversion requires review."
             )
@@ -1013,6 +1014,8 @@ def _equation_from_pdf_line(text: str, section: ContentBlock, number: int) -> Eq
     latex = equation_text
     if equation_number:
         latex = _clean_text(latex[: -len(equation_number)])
+    omml = latex_to_omml(latex)
+    requires_review = not bool(omml)
 
     return EquationItem(
         id=f"pdf-equation-{number}",
@@ -1020,8 +1023,9 @@ def _equation_from_pdf_line(text: str, section: ContentBlock, number: int) -> Eq
         text=equation_text,
         number=equation_number,
         latex=latex,
-        source=_equation_source(section),
-        requires_review=True,
+        omml=omml,
+        source=_equation_source(section, requires_review=requires_review),
+        requires_review=requires_review,
     )
 
 
@@ -1030,15 +1034,15 @@ def _extract_equation_number(text: str) -> str:
     return match.group(0) if match else ""
 
 
-def _equation_source(section: ContentBlock) -> SourceEvidence:
+def _equation_source(section: ContentBlock, *, requires_review: bool) -> SourceEvidence:
     source = section.source
     return SourceEvidence(
         file=SOURCE_PDF_NAME,
         method="pdf-equation-text",
         paragraph_index=source.paragraph_index if source else None,
         page_hint=source.page_hint if source else None,
-        confidence=0.5,
-        requires_review=True,
+        confidence=0.5 if requires_review else 0.82,
+        requires_review=requires_review,
     )
 
 

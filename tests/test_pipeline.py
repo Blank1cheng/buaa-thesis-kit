@@ -335,7 +335,7 @@ def test_run_pipeline_pdf_table_becomes_editable_word_table(tmp_path, monkeypatc
     assert "Accuracy & 98\\%" in tex
 
 
-def test_run_pipeline_pdf_equation_writes_equation_ledger_and_review_marker(tmp_path, monkeypatch):
+def test_run_pipeline_pdf_equation_writes_editable_omml_and_ledger(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 
     source = tmp_path / "source-equation.pdf"
@@ -345,17 +345,20 @@ def test_run_pipeline_pdf_equation_writes_equation_ledger_and_review_marker(tmp_
 
     report = pipeline.run_pipeline(source, output)
 
-    assert report["status"] == "needs_review"
     assert report["summary"]["equations"] == 1
     assert report["equation_ledger"][0]["kind"] == "pdf-text-equation"
-    assert report["equation_ledger"][0]["status"] == "latex_needs_review"
+    assert report["equation_ledger"][0]["status"] == "editable_omml"
     assert report["equation_ledger"][0]["number"] == "(2.1)"
-    assert report["equation_ledger"][0]["editable_in_word"] is False
-    assert any("Equation pdf-equation-1 requires review" in item for item in report["manual_review"])
+    assert report["equation_ledger"][0]["editable_in_word"] is True
+    assert not any("Equation pdf-equation-1 requires review" in item for item in report["manual_review"])
     docx_text = Document(output / "thesis.docx").paragraphs
-    assert any("[Equation requires review]" in paragraph.text for paragraph in docx_text)
+    assert not any("[Equation requires review]" in paragraph.text for paragraph in docx_text)
+    with zipfile.ZipFile(output / "thesis.docx") as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+    assert "<m:oMathPara" in document_xml
+    assert "<m:sSub>" in document_xml
     report_text = (output / "report.md").read_text(encoding="utf-8")
-    assert "status=latex_needs_review" in report_text
+    assert "status=editable_omml" in report_text
     assert "pdf-text-equation" in report_text
 
 

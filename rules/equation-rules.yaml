@@ -4,6 +4,7 @@ equations:
     - omml
     - mathtype_ole
     - equation_editor
+    - safe_linear_pdf_text
     - image_equation
     - plain_text
   field_markers:
@@ -13,6 +14,7 @@ equations:
 manual_review:
   - mathtype_ole
   - image_equation
+  - unsupported_latex_macro
   - multi_equation_same_paragraph
   - missing_number
   - duplicate_number

@@ -71,8 +71,8 @@ python scripts/run_pipeline.py input.pdf --out output --strict
 
 `output/report.md` 中的 `Editability Audit` 是判断 `thesis.docx` 是否可编辑的机器证据。
 PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只能作为 OCR 或人工复核证据，
-不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count` 和
-`drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。`body_snippet_count`
+不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count`、`drawing_count`
+和 `omml_equation_count` 用于辅助判断正文、表格、图像和公式是否以可编辑 Word 结构输出。`body_snippet_count`
 和 `body_snippet_hits` 记录从源正文抽样出的文本片段是否能在最终 Word 中以可编辑文本命中；
 若源正文片段完全未命中，说明正文可能被图片替代，必须阻断。
 
@@ -97,9 +97,10 @@ Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
 
 `output/report.md` 中的 `Equation Ledger` 记录每个公式在最终 Word 中的可编辑状态。`editable_omml`
 表示可编辑 Word 公式，`editable_ole_object` 表示保留了可编辑 OLE/MathType 对象，`trusted_latex`
-表示可由可信 LaTeX 结构恢复；`latex_needs_review` 表示 PDF 文本层中检测到公式样式文本，
-已经进入账本但仍需要复核并转换为可编辑 Word 公式。`preview_image_needs_review` 和
-`manual_transcription_required` 不能静默通过，必须由 agent 或人工转写成可编辑公式后再进入最终验收。
+表示可由可信 LaTeX 结构恢复。PDF 文本层中的 safe linear equation 只有在解析器能够完整转换为
+OMML 时才标记为 `editable_omml`；`latex_needs_review` 表示公式样式文本已经进入账本但仍需要复核并
+转换为可编辑 Word 公式。`preview_image_needs_review` 和 `manual_transcription_required` 不能静默通过，
+必须由 agent 或人工转写成可编辑公式后再进入最终验收。
 
 ## 图表一致性验收
 
