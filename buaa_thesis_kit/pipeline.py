@@ -7,10 +7,18 @@ from pathlib import Path
 from typing import Any
 
 from buaa_thesis_kit.docx_extract import extract_thesis_model
+from buaa_thesis_kit.graph import GraphRunner, GraphState, NodeResult
+from buaa_thesis_kit.graph_nodes import (
+    apply_word_fixes,
+    decide,
+    diagnose_compliance,
+    inspect_source_features,
+    plan_minimal_fixes,
+    visual_compare,
+)
 from buaa_thesis_kit.models import ThesisModel
 from buaa_thesis_kit.pdf_extract import extract_pdf_model
 from buaa_thesis_kit.pdf_export import export_pdf_from_docx
-from buaa_thesis_kit.template_fill import fill_word_template
 from buaa_thesis_kit.tex_gen import generate_tex
 from buaa_thesis_kit.validate import (
     PROCESS_FILE_NAMES,
@@ -26,9 +34,9 @@ DEFAULT_DOCX_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "templates" / "buaa_undergraduate_thesis_template.docx"
 )
 PUBLIC_OUTPUT_STATUSES = {
-    "thesis.docx": "missing",
-    "thesis.pdf": "missing",
-    "thesis.tex": "missing",
+    "word": "missing",
+    "pdf": "missing",
+    "tex": "missing",
     "report.md": "pass",
     "image": "missing",
 }
@@ -40,7 +48,7 @@ def run_pipeline(
     template_path: Path | None = None,
     keep_work: bool = False,
 ) -> dict[str, Any]:
-    """Run the Phase 1 BUAA thesis conversion pipeline."""
+    """Run the BUAA thesis repair-first graph pipeline."""
     source_path = Path(source).expanduser().resolve(strict=False)
     output_root = _prepare_output_dir(Path(output_dir), source_path)
     image_dir = output_root / "image"
@@ -75,95 +83,130 @@ def run_pipeline(
         if keep_work:
             notes.append(f"Work directory retained: {work_dir}")
 
-        extraction_source = source_path
-        if source_suffix == ".doc":
-            converted_source = work_dir / "source.docx"
-            conversion_ok, conversion_message = convert_doc_to_docx(source_path, converted_source)
-            if conversion_ok:
-                extraction_source = converted_source
-                source_suffix = ".docx"
-                notes.append(conversion_message)
-            else:
-                blocking_items.append(f"DOC conversion blocking: {conversion_message}")
-                return _finalize_report(
-                    source_path,
-                    output_root,
-                    outputs,
-                    _summary(model),
-                    blocking_items,
-                    manual_review,
-                    notes,
-                )
-
-        try:
-            if source_suffix == ".docx":
-                model = extract_thesis_model(extraction_source, work_dir)
-            else:
-                model = extract_pdf_model(extraction_source, work_dir)
-        except Exception as exc:  # python-docx/ZIP/XML failures are reported, not leaked.
-            model = ThesisModel(status="failed")
-            model.extraction_warnings.append(f"extraction failed unexpectedly: {exc}")
-
-        if model.status == "failed":
-            blocking_items.append(_model_failed_message(model))
-            return _finalize_report(
-                source_path,
-                output_root,
-                outputs,
-                _summary(model),
-                blocking_items,
-                manual_review,
-                notes,
-            )
-
-        notes.extend(_copy_final_figure_assets(model, image_dir))
-
-        thesis_docx = output_root / "thesis.docx"
         word_template = Path(template_path) if template_path is not None else DEFAULT_DOCX_TEMPLATE
-        try:
-            fill_word_template(word_template, model, thesis_docx)
-            outputs["thesis.docx"] = _file_status(thesis_docx)
-        except Exception as exc:
-            outputs["thesis.docx"] = "failed"
-            blocking_items.append(f"Word DOCX generation failed: {exc}")
+        state = GraphState(
+            source_path=source_path,
+            output_root=output_root,
+            work_dir=work_dir,
+            template_path=word_template,
+            outputs=outputs,
+        )
+        state.notes.extend(notes)
+        state.blocking_items.extend(blocking_items)
+        state.manual_review.extend(manual_review)
 
-        thesis_tex = output_root / "thesis.tex"
-        tex_needs_review = False
-        try:
-            generate_tex(model, thesis_tex, image_root=image_dir)
-            tex_needs_review = _tex_contains_review_markers(thesis_tex)
-            outputs["thesis.tex"] = "needs_review" if tex_needs_review else _file_status(thesis_tex)
-        except Exception as exc:
-            outputs["thesis.tex"] = "failed"
-            blocking_items.append(f"TeX generation failed: {exc}")
-
-        thesis_pdf = output_root / "thesis.pdf"
-        if outputs["thesis.docx"] in {"pass", "needs_review"}:
-            pdf_ok, pdf_message = export_pdf_from_docx(thesis_docx, thesis_pdf)
-            if pdf_ok:
-                outputs["thesis.pdf"] = "pass"
-                notes.append(pdf_message)
-            else:
-                outputs["thesis.pdf"] = "failed"
-                blocking_items.append(f"PDF export blocking: {pdf_message}")
-        else:
-            outputs["thesis.pdf"] = "failed"
-            blocking_items.append("PDF export skipped: thesis.docx was not generated successfully.")
-
-        manual_review.extend(_manual_review_items(model, tex_needs_review))
+        graph = GraphRunner(_pipeline_nodes(source_suffix, image_dir), start_node="ingest")
+        state = graph.run(state)
+        model = state.model
+        state.notes.append(f"Graph nodes executed: {' -> '.join(state.history)}")
 
         return _finalize_report(
             source_path,
             output_root,
-            outputs,
+            state.outputs,
             _summary(model),
-            blocking_items,
-            manual_review,
-            notes,
+            state.blocking_items,
+            state.manual_review,
+            state.notes,
         )
     finally:
         if work_dir is not None and remove_work:
             _remove_work_dir(work_dir, output_root)
+
+
+def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
+    def ingest(state: GraphState) -> NodeResult:
+        if source_suffix == ".doc":
+            converted_source = state.work_dir / "source.docx"
+            conversion_ok, conversion_message = convert_doc_to_docx(state.source_path, converted_source)
+            if conversion_ok:
+                state.extraction_source = converted_source
+                state.source_kind = "docx"
+                state.notes.append(conversion_message)
+                return NodeResult(next_node="profile_reference")
+            state.blocking_items.append(f"DOC conversion blocking: {conversion_message}")
+            return NodeResult(next_node="finalize_output")
+
+        state.extraction_source = state.source_path
+        state.source_kind = source_suffix.lstrip(".")
+        return NodeResult(next_node="profile_reference")
+
+    def profile_reference(state: GraphState) -> NodeResult:
+        reference_pdf = Path("C:/Users/admin/Desktop/\u5d14\u6da6\u660a\u6bd5\u8bbe\u6253\u5370\u7248.pdf")
+        if reference_pdf.exists():
+            state.notes.append(f"Reference PDF available for visual profile: {reference_pdf}")
+        else:
+            state.manual_review.append(f"Reference PDF missing, visual profile skipped: {reference_pdf}")
+        return NodeResult(next_node="inspect_source")
+
+    def inspect_source(state: GraphState) -> NodeResult:
+        try:
+            if state.source_kind == "docx":
+                state.model = extract_thesis_model(Path(state.extraction_source), state.work_dir)
+            else:
+                state.model = extract_pdf_model(Path(state.extraction_source), state.work_dir)
+        except Exception as exc:  # python-docx/ZIP/XML failures are reported, not leaked.
+            state.model = ThesisModel(status="failed")
+            state.model.extraction_warnings.append(f"extraction failed unexpectedly: {exc}")
+        return inspect_source_features(state)
+
+    def export_pdf(state: GraphState) -> NodeResult:
+        state.notes.extend(_copy_final_figure_assets(state.model, image_dir))
+
+        thesis_docx = state.output_root / "thesis.docx"
+        if state.authoritative_docx is not None and state.authoritative_docx.exists():
+            try:
+                shutil.copy2(state.authoritative_docx, thesis_docx)
+                state.outputs["word"] = _file_status(thesis_docx)
+            except OSError as exc:
+                state.outputs["word"] = "failed"
+                state.blocking_items.append(f"Word DOCX finalization failed: {exc}")
+        else:
+            state.outputs["word"] = "failed"
+            state.blocking_items.append("Word DOCX generation failed: no authoritative DOCX was produced.")
+
+        thesis_tex = state.output_root / "thesis.tex"
+        tex_needs_review = False
+        try:
+            generate_tex(state.model, thesis_tex, image_root=image_dir)
+            tex_needs_review = _tex_contains_review_markers(thesis_tex)
+            state.outputs["tex"] = "needs_review" if tex_needs_review else _file_status(thesis_tex)
+        except Exception as exc:
+            state.outputs["tex"] = "failed"
+            state.blocking_items.append(f"TeX generation failed: {exc}")
+
+        thesis_pdf = state.output_root / "thesis.pdf"
+        if state.outputs["word"] in {"pass", "needs_review"}:
+            pdf_ok, pdf_message = export_pdf_from_docx(thesis_docx, thesis_pdf)
+            if pdf_ok:
+                state.outputs["pdf"] = "pass"
+                state.notes.append(pdf_message)
+            else:
+                state.outputs["pdf"] = "failed"
+                state.blocking_items.append(f"PDF export blocking: {pdf_message}")
+        else:
+            state.outputs["pdf"] = "failed"
+            state.blocking_items.append("PDF export skipped: thesis.docx was not generated successfully.")
+
+        state.manual_review.extend(_manual_review_items(state.model, tex_needs_review))
+        return NodeResult(next_node="visual_compare")
+
+    def finalize_output(_state: GraphState) -> NodeResult:
+        return NodeResult(next_node=None)
+
+    return {
+        "ingest": ingest,
+        "profile_reference": profile_reference,
+        "inspect_source": inspect_source,
+        "diagnose_compliance": diagnose_compliance,
+        "plan_minimal_fixes": plan_minimal_fixes,
+        "apply_word_fixes": apply_word_fixes,
+        "export_pdf": export_pdf,
+        "visual_compare": visual_compare,
+        "decide": decide,
+        "finalize_output": finalize_output,
+        "revise_plan": plan_minimal_fixes,
+    }
 
 
 def _prepare_output_dir(output_dir: Path, source_path: Path | None = None) -> Path:
