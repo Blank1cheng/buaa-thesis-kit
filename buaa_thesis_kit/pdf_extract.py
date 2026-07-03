@@ -11,6 +11,7 @@ from typing import Any, Iterable
 from buaa_thesis_kit.models import (
     AssetItem,
     ContentBlock,
+    EquationItem,
     Metadata,
     OcrLedgerItem,
     SourceEvidence,
@@ -191,6 +192,7 @@ def extract_pdf_model(
             model.metadata = _extract_metadata(lines)
             model.sections, model.references = _extract_content(lines)
             model.sections, model.tables = _extract_tables_from_sections(model.sections)
+            model.sections, model.equations = _extract_equations_from_sections(model.sections)
             model.extraction_warnings.append(
                 "PDF input converted through text extraction; layout review required against the source PDF."
             )
@@ -206,6 +208,10 @@ def extract_pdf_model(
         if model.tables:
             model.extraction_warnings.append(
                 "PDF tabular text converted to editable tables; structure requires review."
+            )
+        if model.equations:
+            model.extraction_warnings.append(
+                "PDF equation-like text extracted for equation ledger; editable Word equation conversion requires review."
             )
         model.extraction_warnings.extend(_metadata_warnings(model.metadata))
         if not model.sections and not model.figures:
@@ -953,6 +959,85 @@ def _table_source(section: ContentBlock) -> SourceEvidence:
         paragraph_index=source.paragraph_index if source else None,
         page_hint=source.page_hint if source else None,
         confidence=0.55,
+        requires_review=True,
+    )
+
+
+def _extract_equations_from_sections(
+    sections: list[ContentBlock],
+) -> tuple[list[ContentBlock], list[EquationItem]]:
+    rendered_sections: list[ContentBlock] = []
+    equations: list[EquationItem] = []
+    for section in sections:
+        kept_lines: list[str] = []
+        for line in str(section.text or "").splitlines():
+            text = _clean_text(line)
+            if _looks_like_equation_line(text):
+                equations.append(_equation_from_pdf_line(text, section, len(equations) + 1))
+            else:
+                kept_lines.append(line)
+
+        rendered_sections.append(
+            ContentBlock(
+                id=section.id,
+                type=section.type,
+                title=section.title,
+                text="\n".join(line for line in kept_lines if str(line).strip()).strip(),
+                level=section.level,
+                source=section.source,
+            )
+        )
+    return rendered_sections, equations
+
+
+def _looks_like_equation_line(text: str) -> bool:
+    value = _clean_text(text)
+    if not (3 <= len(value) <= 180):
+        return False
+    if _looks_like_heading(value) or _is_table_caption(value) or FIGURE_CAPTION_RE.match(value):
+        return False
+    if re.search(r"[。；;，,]\s*$", value):
+        return False
+    if not re.search(r"[A-Za-z][A-Za-z0-9_{}()]*\s*(?:=|≈|<=|>=|≤|≥)", value):
+        return False
+    operator_count = len(re.findall(r"(?:=|≈|<=|>=|≤|≥|\+|-|\*|/|\^|_|\{|\})", value))
+    if operator_count < 2:
+        return False
+    word_count = len(re.findall(r"[A-Za-z]+", value))
+    return word_count <= 18
+
+
+def _equation_from_pdf_line(text: str, section: ContentBlock, number: int) -> EquationItem:
+    equation_text = _clean_text(text)
+    equation_number = _extract_equation_number(equation_text)
+    latex = equation_text
+    if equation_number:
+        latex = _clean_text(latex[: -len(equation_number)])
+
+    return EquationItem(
+        id=f"pdf-equation-{number}",
+        kind="pdf-text-equation",
+        text=equation_text,
+        number=equation_number,
+        latex=latex,
+        source=_equation_source(section),
+        requires_review=True,
+    )
+
+
+def _extract_equation_number(text: str) -> str:
+    match = re.search(r"\((\d+(?:\.\d+)*)\)\s*$", str(text or "").strip())
+    return match.group(0) if match else ""
+
+
+def _equation_source(section: ContentBlock) -> SourceEvidence:
+    source = section.source
+    return SourceEvidence(
+        file=SOURCE_PDF_NAME,
+        method="pdf-equation-text",
+        paragraph_index=source.paragraph_index if source else None,
+        page_hint=source.page_hint if source else None,
+        confidence=0.5,
         requires_review=True,
     )
 

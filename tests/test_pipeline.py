@@ -130,6 +130,33 @@ def _write_text_pdf_with_table(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_equation(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Equation Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "The state transition model is defined below.",
+                "x_k = F x_{k-1} + w_k (2.1)",
+                "The equation above is used for prediction.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_blank_pdf(path: Path) -> None:
     document = fitz.open()
     document.new_page(width=300, height=400)
@@ -306,6 +333,30 @@ def test_run_pipeline_pdf_table_becomes_editable_word_table(tmp_path, monkeypatc
     tex = (output / "thesis.tex").read_text(encoding="utf-8")
     assert "\\begin{table}" in tex
     assert "Accuracy & 98\\%" in tex
+
+
+def test_run_pipeline_pdf_equation_writes_equation_ledger_and_review_marker(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source-equation.pdf"
+    output = tmp_path / "output"
+    _write_text_pdf_with_equation(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "needs_review"
+    assert report["summary"]["equations"] == 1
+    assert report["equation_ledger"][0]["kind"] == "pdf-text-equation"
+    assert report["equation_ledger"][0]["status"] == "latex_needs_review"
+    assert report["equation_ledger"][0]["number"] == "(2.1)"
+    assert report["equation_ledger"][0]["editable_in_word"] is False
+    assert any("Equation pdf-equation-1 requires review" in item for item in report["manual_review"])
+    docx_text = Document(output / "thesis.docx").paragraphs
+    assert any("[Equation requires review]" in paragraph.text for paragraph in docx_text)
+    report_text = (output / "report.md").read_text(encoding="utf-8")
+    assert "status=latex_needs_review" in report_text
+    assert "pdf-text-equation" in report_text
 
 
 def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_screenshot(
@@ -486,6 +537,13 @@ def test_equation_report_classifies_editable_and_review_equations(tmp_path):
                 requires_review=True,
             ),
             EquationItem(
+                id="eq-latex-review",
+                kind="pdf-text-equation",
+                text="x+y",
+                latex="x+y",
+                requires_review=True,
+            ),
+            EquationItem(
                 id="eq-manual",
                 kind="unknown",
                 text="manual",
@@ -505,6 +563,8 @@ def test_equation_report_classifies_editable_and_review_equations(tmp_path):
     assert by_id["eq-object"]["preview_path"] == str((image_dir / "formula.png").resolve(strict=False))
     assert by_id["eq-preview"]["status"] == "preview_image_needs_review"
     assert by_id["eq-preview"]["editable_in_word"] is False
+    assert by_id["eq-latex-review"]["status"] == "latex_needs_review"
+    assert by_id["eq-latex-review"]["editable_in_word"] is False
     assert by_id["eq-manual"]["status"] == "manual_transcription_required"
     assert by_id["eq-manual"]["editable_in_word"] is False
 

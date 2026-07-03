@@ -512,6 +512,8 @@ def _equation_status(equation: EquationItem) -> str:
         return "editable_ole_object"
     if equation.latex.strip() and not equation.requires_review:
         return "trusted_latex"
+    if equation.latex.strip():
+        return "latex_needs_review"
     if equation.preview_path:
         return "preview_image_needs_review"
     return "manual_transcription_required"
