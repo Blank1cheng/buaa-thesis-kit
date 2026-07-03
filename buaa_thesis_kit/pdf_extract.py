@@ -19,6 +19,20 @@ class PdfLine:
     text: str
 
 
+@dataclass(frozen=True)
+class PdfTextBlock:
+    bbox: tuple[float, float, float, float]
+    text: str
+
+
+@dataclass(frozen=True)
+class PdfImageCandidate:
+    index: int
+    page: int
+    bbox: tuple[float, float, float, float]
+    caption: str
+
+
 FIELD_LABELS: dict[str, tuple[str, ...]] = {
     "title_cn": ("中文题目", "论文题目", "毕业设计（论文）题目", "题目"),
     "title_en": ("English Title", "Title in English", "Title"),
@@ -44,6 +58,13 @@ RUNNING_HEADER_PREFIXES = (
     "北京航空航天大学毕业设计（论文）",
 )
 PAGE_NUMBER_MARKERS = {"第", "页"}
+FIGURE_CAPTION_RE = re.compile(
+    "^(?:(?:\u56fe)\\s*\\d+(?:[.\\-]\\d+)*|fig(?:ure)?\\.?\\s*\\d+(?:[.\\-]\\d+)*)\\s+.+",
+    flags=re.IGNORECASE,
+)
+MIN_DISPLAY_IMAGE_AREA = 5_000.0
+LARGE_UNCAPTIONED_IMAGE_AREA = 40_000.0
+MAX_FIGURE_CAPTION_DISTANCE = 90.0
 NEXT_LINE_LABELS: dict[str, str] = {
     "单位代码": "unit_code",
     "学校代码": "unit_code",
@@ -114,6 +135,7 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
                 for text in page_text:
                     lines.append(PdfLine(index=line_index, page=page_index + 1, text=text))
                     line_index += 1
+                model.figures.extend(_extract_page_figures(page, work, page_index + 1))
             else:
                 figure = _render_page_image(page, work, page_index + 1)
                 model.figures.append(figure)
@@ -132,6 +154,10 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
                 "OCR required: PDF has no extractable text; generated Word/TeX content uses rendered page images only."
             )
 
+        if any(figure.type == "pdf-figure-image" for figure in model.figures):
+            model.extraction_warnings.append(
+                "PDF embedded figures extracted as cropped images; captions and placement require review."
+            )
         model.extraction_warnings.extend(_metadata_warnings(model.metadata))
         if not model.sections and not model.figures:
             model.extraction_warnings.append("missing PDF body content")
@@ -172,6 +198,186 @@ def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:
         ),
         requires_review=True,
     )
+
+
+def _extract_page_figures(page, work_dir: Path, page_number: int) -> list[AssetItem]:
+    try:
+        import fitz
+
+        layout = page.get_text("dict")
+    except Exception:
+        return []
+
+    text_blocks = _text_blocks_from_layout(layout)
+    candidates: list[PdfImageCandidate] = []
+    image_index = 0
+    for block in layout.get("blocks", []):
+        if block.get("type") != 1:
+            continue
+        bbox = _bbox_tuple(block.get("bbox"))
+        if bbox is None:
+            continue
+        caption = _nearest_figure_caption(bbox, text_blocks)
+        if _skip_pdf_image_block(bbox, page.rect, caption):
+            continue
+        image_index += 1
+        candidates.append(
+            PdfImageCandidate(
+                index=image_index,
+                page=page_number,
+                bbox=bbox,
+                caption=caption,
+            )
+        )
+
+    if not candidates:
+        return []
+
+    image_dir = work_dir / "pdf-figures"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    figures: list[AssetItem] = []
+    for group_index, group in enumerate(_group_image_candidates(candidates), start=1):
+        clip = _figure_clip_rect(fitz, page.rect, [candidate.bbox for candidate in group])
+        if clip.width <= 1 or clip.height <= 1:
+            continue
+        image_path = image_dir / f"pdf-figure-page-{page_number:03d}-{group_index:02d}.png"
+        try:
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=clip, alpha=False)
+            pixmap.save(str(image_path))
+        except Exception:
+            continue
+        caption = _common_caption(group)
+        figures.append(
+            AssetItem(
+                id=f"pdf-figure-{page_number}-{group_index}",
+                type="pdf-figure-image",
+                path=str(image_path),
+                caption=caption,
+                source=SourceEvidence(
+                    file=SOURCE_PDF_NAME,
+                    method="pdf-embedded-image",
+                    page_hint=page_number,
+                    confidence=0.62 if caption else 0.45,
+                    requires_review=True,
+                ),
+                requires_review=True,
+            )
+        )
+    return figures
+
+
+def _text_blocks_from_layout(layout: dict) -> list[PdfTextBlock]:
+    blocks: list[PdfTextBlock] = []
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        bbox = _bbox_tuple(block.get("bbox"))
+        if bbox is None:
+            continue
+        text = _clean_text(
+            " ".join(
+                str(span.get("text", ""))
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+            )
+        )
+        if text:
+            blocks.append(PdfTextBlock(bbox=bbox, text=text))
+    return blocks
+
+
+def _bbox_tuple(value) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def _nearest_figure_caption(
+    image_bbox: tuple[float, float, float, float],
+    text_blocks: list[PdfTextBlock],
+) -> str:
+    matches: list[tuple[float, PdfTextBlock]] = []
+    for block in text_blocks:
+        if not FIGURE_CAPTION_RE.match(block.text):
+            continue
+        vertical_gap = block.bbox[1] - image_bbox[3]
+        if vertical_gap < -2 or vertical_gap > MAX_FIGURE_CAPTION_DISTANCE:
+            continue
+        if _horizontal_overlap(image_bbox, block.bbox) <= 0:
+            continue
+        matches.append((vertical_gap, block))
+    if not matches:
+        return ""
+    return min(matches, key=lambda item: item[0])[1].text
+
+
+def _skip_pdf_image_block(
+    bbox: tuple[float, float, float, float],
+    page_rect,
+    caption: str,
+) -> bool:
+    area = _bbox_area(bbox)
+    if area < MIN_DISPLAY_IMAGE_AREA:
+        return True
+    if caption:
+        return False
+    if _is_header_footer_image(bbox, page_rect):
+        return True
+    return area < LARGE_UNCAPTIONED_IMAGE_AREA
+
+
+def _is_header_footer_image(bbox: tuple[float, float, float, float], page_rect) -> bool:
+    page_top = float(getattr(page_rect, "y0", 0.0))
+    page_bottom = float(getattr(page_rect, "y1", 0.0))
+    return bbox[3] <= page_top + 130.0 or bbox[1] >= page_bottom - 90.0
+
+
+def _group_image_candidates(candidates: list[PdfImageCandidate]) -> list[list[PdfImageCandidate]]:
+    groups: list[list[PdfImageCandidate]] = []
+    by_key: dict[tuple[int, str], list[PdfImageCandidate]] = {}
+    for candidate in candidates:
+        if candidate.caption:
+            key = (candidate.page, candidate.caption)
+        else:
+            key = (candidate.page, f"uncaptioned-{candidate.index}")
+        if key not in by_key:
+            by_key[key] = []
+            groups.append(by_key[key])
+        by_key[key].append(candidate)
+    return groups
+
+
+def _figure_clip_rect(fitz, page_rect, boxes: list[tuple[float, float, float, float]]):
+    padding = 2.0
+    x0 = max(float(page_rect.x0), min(box[0] for box in boxes) - padding)
+    y0 = max(float(page_rect.y0), min(box[1] for box in boxes) - padding)
+    x1 = min(float(page_rect.x1), max(box[2] for box in boxes) + padding)
+    y1 = min(float(page_rect.y1), max(box[3] for box in boxes) + padding)
+    return fitz.Rect(x0, y0, x1, y1)
+
+
+def _common_caption(candidates: list[PdfImageCandidate]) -> str:
+    for candidate in candidates:
+        if candidate.caption:
+            return candidate.caption
+    return ""
+
+
+def _bbox_area(bbox: tuple[float, float, float, float]) -> float:
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def _horizontal_overlap(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> float:
+    return max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
 
 
 def _extract_metadata(lines: list[PdfLine]) -> Metadata:

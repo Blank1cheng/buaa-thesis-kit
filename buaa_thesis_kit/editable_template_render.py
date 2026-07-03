@@ -8,9 +8,9 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Inches, Pt
 
-from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
+from buaa_thesis_kit.models import AssetItem, ContentBlock, Metadata, ThesisModel
 from buaa_thesis_kit.template_fill import (
     _add_abstracts,
     _add_appendices,
@@ -27,6 +27,11 @@ from buaa_thesis_kit.template_fill import (
 SPINE_MARKER = "书脊"
 SAMPLE_BODY_START = "论文封面书脊"
 PDF_EXTRACTED_TEXT_TITLE = "PDF Extracted Text"
+SUPPORTED_INLINE_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+FIGURE_MARKER_RE = re.compile(
+    "^(?:(?:\u56fe)|fig(?:ure)?\\.?)\\s*(\\d+(?:[.\\-]\\d+)*)",
+    flags=re.IGNORECASE,
+)
 
 
 def render_editable_buaa_docx(template_path: Path, model: ThesisModel, output_path: Path) -> None:
@@ -160,21 +165,103 @@ def _append_spine_page(document, metadata: Metadata) -> None:
 def _append_model_content(document, model: ThesisModel) -> None:
     document.add_page_break()
     _add_abstracts(document, model)
-    _add_sections_with_page_breaks(document, _sections_without_pdf_placeholder_heading(model.sections))
+    rendered_figure_ids = _add_sections_with_page_breaks(
+        document,
+        _sections_without_pdf_placeholder_heading(model.sections),
+        model.figures,
+    )
     _add_tables(document, model.tables)
-    _add_figures(document, model.figures)
+    _add_figures(
+        document,
+        [figure for figure in model.figures if figure.id not in rendered_figure_ids],
+    )
     _add_equations(document, model.equations)
     _add_references(document, model.references)
     _add_appendices(document, model.appendices)
 
 
-def _add_sections_with_page_breaks(document, sections: list[ContentBlock]) -> None:
+def _add_sections_with_page_breaks(
+    document,
+    sections: list[ContentBlock],
+    figures: list[AssetItem] | None = None,
+) -> set[str]:
+    rendered_figure_ids: set[str] = set()
     first = True
     for section in sections:
         if not first and _section_starts_new_page(section):
             document.add_page_break()
-        _add_sections(document, [section])
+        _add_section_with_inline_figures(document, section, figures or [], rendered_figure_ids)
         first = False
+    return rendered_figure_ids
+
+
+def _add_section_with_inline_figures(
+    document,
+    section: ContentBlock,
+    figures: list[AssetItem],
+    rendered_figure_ids: set[str],
+) -> None:
+    if section.title:
+        _add_sections(document, [replace(section, text="")])
+    for text in _split_section_text(section.text):
+        figure = _matching_captioned_figure(text, figures, rendered_figure_ids)
+        if figure is not None and _add_inline_figure(document, figure):
+            rendered_figure_ids.add(figure.id)
+        document.add_paragraph(text)
+
+
+def _matching_captioned_figure(
+    paragraph_text: str,
+    figures: list[AssetItem],
+    rendered_figure_ids: set[str],
+) -> AssetItem | None:
+    paragraph_key = _caption_key(paragraph_text)
+    if not paragraph_key:
+        return None
+    paragraph_marker = _figure_marker_key(paragraph_text)
+    for figure in figures:
+        if figure.id in rendered_figure_ids:
+            continue
+        if _caption_key(figure.caption) == paragraph_key:
+            return figure
+        if paragraph_marker and _figure_marker_key(figure.caption) == paragraph_marker:
+            return figure
+    return None
+
+
+def _add_inline_figure(document, figure: AssetItem) -> bool:
+    image_path = Path(figure.path) if figure.path else None
+    if image_path is None or not _is_supported_inline_image(image_path):
+        return False
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    try:
+        paragraph.add_run().add_picture(str(image_path), width=Inches(5.5))
+    except Exception:
+        parent = paragraph._element.getparent()
+        if parent is not None:
+            parent.remove(paragraph._element)
+        return False
+    return True
+
+
+def _is_supported_inline_image(path: Path) -> bool:
+    return path.exists() and path.is_file() and path.suffix.lower() in SUPPORTED_INLINE_IMAGE_SUFFIXES
+
+
+def _split_section_text(text: str) -> list[str]:
+    return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+
+def _caption_key(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).casefold()
+
+
+def _figure_marker_key(text: str) -> str:
+    match = FIGURE_MARKER_RE.match(str(text or "").strip())
+    if not match:
+        return ""
+    return match.group(1).replace("-", ".").casefold()
 
 
 def _section_starts_new_page(section: ContentBlock) -> bool:

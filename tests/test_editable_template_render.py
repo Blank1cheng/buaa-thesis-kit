@@ -1,10 +1,11 @@
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from docx import Document
 
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
-from buaa_thesis_kit.models import ContentBlock, EquationItem, Metadata, ThesisModel
+from buaa_thesis_kit.models import AssetItem, ContentBlock, EquationItem, Metadata, ThesisModel
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,26 @@ OMML_FRAGMENT = (
     "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
     "</m:oMathPara>"
 )
+TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02\x00\x00\x00\x0bIDATx\xdac\xfc\xff"
+    b"\x1f\x00\x03\x03\x02\x00\xef\xbf\xa7\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _body_paragraph_items(docx_path: Path) -> list[tuple[str, bool]]:
+    with zipfile.ZipFile(docx_path) as docx_zip:
+        root = ET.fromstring(docx_zip.read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    body = root.find("w:body", ns)
+    assert body is not None
+    items: list[tuple[str, bool]] = []
+    for paragraph in body.findall("w:p", ns):
+        text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        has_drawing = paragraph.find(".//w:drawing", ns) is not None
+        if text or has_drawing:
+            items.append((text, has_drawing))
+    return items
 
 
 def test_render_editable_buaa_docx_reuses_template_without_page_screenshots(tmp_path):
@@ -194,3 +215,96 @@ def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp
         index = paragraph_texts.index(marker)
         previous_xml = paragraphs[index - 1]._p.xml
         assert '<w:br w:type="page"' in previous_xml
+
+
+def test_render_editable_buaa_docx_inlines_captioned_figures_near_body_caption(tmp_path):
+    image_path = tmp_path / "figure.png"
+    image_path.write_bytes(TINY_PNG)
+    caption = "Fig. 1.1 System architecture"
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Inline Figure Thesis",
+            student_name="Zhang San",
+            student_id="20370001",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-06",
+            classification="TP273",
+        ),
+        sections=[
+            ContentBlock(
+                id="body",
+                type="chapter",
+                title="1 Introduction",
+                text=f"Before paragraph.\n{caption}\nAfter paragraph.",
+                level=1,
+            )
+        ],
+        figures=[
+            AssetItem(
+                id="fig-1",
+                type="pdf-figure-image",
+                path=str(image_path),
+                caption=caption,
+                requires_review=True,
+            )
+        ],
+    )
+    output = tmp_path / "inline-figure.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    items = _body_paragraph_items(output)
+    before_index = next(index for index, item in enumerate(items) if item[0] == "Before paragraph.")
+    caption_index = next(index for index, item in enumerate(items) if item[0] == caption)
+    after_index = next(index for index, item in enumerate(items) if item[0] == "After paragraph.")
+    drawing_index = next(index for index, item in enumerate(items) if item[1])
+
+    assert before_index < drawing_index < caption_index < after_index
+    visible_text = "\n".join(text for text, _has_drawing in items)
+    assert "[Figure inserted]" not in visible_text
+    assert str(image_path) not in visible_text
+
+
+def test_render_editable_buaa_docx_inlines_figures_when_pdf_caption_is_split(tmp_path):
+    image_path = tmp_path / "figure.png"
+    image_path.write_bytes(TINY_PNG)
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Split Caption Figure Thesis",
+            student_name="Zhang San",
+            student_id="20370001",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-06",
+            classification="TP273",
+        ),
+        sections=[
+            ContentBlock(
+                id="body",
+                type="chapter",
+                title="1 Introduction",
+                text="Before paragraph.\nFig. 1.1\nSystem architecture\nAfter paragraph.",
+                level=1,
+            )
+        ],
+        figures=[
+            AssetItem(
+                id="fig-1",
+                type="pdf-figure-image",
+                path=str(image_path),
+                caption="Fig. 1.1 System architecture",
+                requires_review=True,
+            )
+        ],
+    )
+    output = tmp_path / "split-caption-figure.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    items = _body_paragraph_items(output)
+    marker_index = next(index for index, item in enumerate(items) if item[0] == "Fig. 1.1")
+    drawing_index = next(index for index, item in enumerate(items) if item[1])
+    assert drawing_index + 1 == marker_index

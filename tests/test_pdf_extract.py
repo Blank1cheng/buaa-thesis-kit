@@ -1,8 +1,14 @@
+import base64
 from pathlib import Path
 
 import fitz
 
 from buaa_thesis_kit.pdf_extract import PdfLine, _extract_content, _extract_metadata, extract_pdf_model
+
+
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def _write_text_pdf(path: Path) -> None:
@@ -24,6 +30,35 @@ def _write_text_pdf(path: Path) -> None:
         ]
     )
     page.insert_text((72, 72), text, fontsize=12)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
+def _write_text_pdf_with_captioned_figure(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Figure Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "This PDF contains body text before a figure.",
+            ]
+        ),
+        fontsize=12,
+    )
+    page.insert_image(fitz.Rect(80, 48, 116, 84), stream=TINY_PNG)
+    page.insert_image(fitz.Rect(120, 220, 340, 350), stream=TINY_PNG)
+    page.insert_text((160, 365), "Fig. 1.1 System architecture", fontsize=12)
+    page.insert_text((72, 400), "This PDF contains body text after a figure.", fontsize=12)
     path.parent.mkdir(parents=True, exist_ok=True)
     document.save(path)
     document.close()
@@ -51,6 +86,26 @@ def test_extract_text_pdf_builds_reviewable_thesis_model(tmp_path):
     assert any("PDF contains extractable thesis text" in section.text for section in model.sections)
     assert any("Test reference" in reference.text for reference in model.references)
     assert any("layout review" in warning.lower() for warning in model.extraction_warnings)
+
+
+def test_extract_text_pdf_extracts_captioned_figures_and_skips_decorative_images(tmp_path):
+    source = tmp_path / "source-with-figure.pdf"
+    work = tmp_path / "work"
+    _write_text_pdf_with_captioned_figure(source)
+
+    model = extract_pdf_model(source, work)
+
+    assert len(model.figures) == 1
+    figure = model.figures[0]
+    assert figure.type == "pdf-figure-image"
+    assert figure.caption == "Fig. 1.1 System architecture"
+    assert Path(figure.path).is_file()
+    assert Path(figure.path).suffix == ".png"
+    assert figure.requires_review is True
+    assert figure.source is not None
+    assert figure.source.method == "pdf-embedded-image"
+    assert figure.source.page_hint == 1
+    assert any("embedded figure" in warning.lower() for warning in model.extraction_warnings)
 
 
 def test_extract_metadata_recovers_vertical_cover_lines():
