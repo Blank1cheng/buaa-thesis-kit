@@ -88,7 +88,7 @@ def test_render_editable_buaa_docx_reuses_template_without_page_screenshots(tmp_
     assert not any("pdf-page" in name for name in media_names)
 
 
-def test_render_editable_buaa_docx_compacts_cover_spacing_for_long_titles(tmp_path):
+def test_render_editable_buaa_docx_preserves_cover_spacing_for_long_titles(tmp_path):
     model = ThesisModel(
         metadata=Metadata(
             title_cn="基于数据驱动的捷联惯性导航组件寿命预测方法研究",
@@ -115,7 +115,7 @@ def test_render_editable_buaa_docx_compacts_cover_spacing_for_long_titles(tmp_pa
 
     blank_cover_paragraphs = [text for text in before_spine if not text.strip()]
     assert "2024年6月" in before_spine
-    assert len(blank_cover_paragraphs) <= 7
+    assert 8 <= len(blank_cover_paragraphs) <= 10
 
 
 def test_render_editable_buaa_docx_shrinks_long_cover_table_values(tmp_path):

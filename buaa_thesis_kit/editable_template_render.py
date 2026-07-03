@@ -129,7 +129,7 @@ def _compact_cover_spacing(document) -> None:
             break
         if child.tag == qn("w:p") and _is_removable_blank_paragraph(child):
             consecutive_blanks += 1
-            if consecutive_blanks > 1:
+            if consecutive_blanks > 2:
                 body.remove(child)
             continue
         consecutive_blanks = 0
