@@ -8,6 +8,7 @@ __pycache__/
 output/
 generated/
 *_work/
+*_work_*/
 *.tmp
 *.log
 

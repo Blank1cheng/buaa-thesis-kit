@@ -456,6 +456,41 @@ def test_conflicting_student_ids_emit_warning_and_needs_review(tmp_path):
     assert model.status == "needs_review"
 
 
+def test_extracts_spaced_cover_student_id_and_unlabeled_cover_date(tmp_path):
+    source = tmp_path / "buaa-cover.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "单位代码       10006",
+            "学    号      17375303",
+            "分类号    TP273",
+            "毕业设计(论文)",
+            "基于实拍图像的光电系统性能评估",
+            "关键技术研究",
+            "2021年5月",
+            "院（系）名称：自动化科学与电气工程学院",
+            "专业名称：自动化",
+            "学生姓名：崔润昊",
+            "指导教师：唐荻音",
+            "摘    要",
+            "这是摘要。",
+            "ABSTRACT",
+            "This is the abstract.",
+            "1 绪论",
+            "正文。",
+            "参考文献",
+            "[1] 王五. 测试[J]. 2021.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.metadata.student_id == "17375303"
+    assert model.metadata.date == "2021年5月"
+    assert model.metadata.classification == "TP273"
+
+
 def test_extracted_model_payload_validates_against_schema(tmp_path):
     source = tmp_path / "schema.docx"
     _save_docx(
