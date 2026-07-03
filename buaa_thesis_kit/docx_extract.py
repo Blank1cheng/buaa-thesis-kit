@@ -37,6 +37,12 @@ CONFLICT_CHECK_FIELDS = {
     "classification",
     "unit_code",
 }
+COVER_COMPACT_LABELS: dict[str, tuple[str, ...]] = {
+    "student_id": ("学生学号", "学号"),
+    "unit_code": ("单位代码", "学校代码"),
+    "classification": ("中图分类号", "分类号"),
+}
+COVER_DATE_RE = re.compile(r"\d{4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?")
 
 
 @dataclass(frozen=True)
@@ -259,6 +265,17 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
                 True,
             )
 
+    if not metadata.date:
+        date, block = _guess_cover_date(blocks[:30])
+        if date and block is not None:
+            metadata.date = date
+            metadata.evidence["date"] = _source(
+                "metadata-cover-date-heuristic",
+                block.index,
+                0.58,
+                True,
+            )
+
     if "unit_code" not in metadata.evidence:
         metadata.unit_code = "10006"
         metadata.evidence["unit_code"] = _source("metadata-default", None, 0.6, False)
@@ -299,8 +316,9 @@ def _extract_value_for_field(field: str, text: str) -> str:
     labels = SORTED_FIELD_LABELS[field]
     match = re.search("|".join(labels), text, flags=re.IGNORECASE)
     if not match:
-        if field == "student_id" and "学号" in text:
-            return _clean_metadata_value(field, text)
+        compact_value = _extract_compact_cover_value(field, text)
+        if compact_value:
+            return compact_value
         return ""
 
     if field == "title_cn" and _is_english_title_label(text, match):
@@ -349,6 +367,30 @@ def _clean_metadata_value(field: str, value: str) -> str:
     if field == "title_en" and not re.search(r"[A-Za-z]", value):
         return ""
     return value
+
+
+def _extract_compact_cover_value(field: str, text: str) -> str:
+    labels = COVER_COMPACT_LABELS.get(field)
+    if not labels:
+        return ""
+    compact_text = re.sub(r"\s+", "", text)
+    for label in labels:
+        if label not in compact_text:
+            continue
+        tail = compact_text.split(label, 1)[1]
+        return _clean_metadata_value(field, tail)
+    return ""
+
+
+def _guess_cover_date(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tuple[str, None]:
+    for block in blocks:
+        text = block.text
+        if _contains_any_label(text):
+            continue
+        match = COVER_DATE_RE.search(text)
+        if match:
+            return re.sub(r"\s+", "", match.group(0)), block
+    return "", None
 
 
 def _guess_chinese_title(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tuple[str, None]:
