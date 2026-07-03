@@ -5,6 +5,7 @@ from pathlib import Path
 
 from docx import Document
 
+from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata
@@ -91,6 +92,19 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
 def visual_compare(state: GraphState) -> NodeResult:
     if "missing_spine" in state.findings and "insert_spine" not in state.applied_repairs:
         _append_once(state.blocking_items, "spine_visual_mismatch: insert_spine repair was not applied.")
+    if state.authoritative_docx is not None:
+        inspection = inspect_docx_output(
+            state.authoritative_docx,
+            state.model.metadata,
+            source_kind=state.source_kind,
+            require_spine=True,
+        )
+        for item in inspection.blocking_items:
+            _append_once(state.blocking_items, item)
+        for item in inspection.manual_review:
+            _append_once(state.manual_review, item)
+        for item in inspection.notes:
+            _append_once(state.notes, item)
     return NodeResult(next_node="decide")
 
 

@@ -1,9 +1,15 @@
 from pathlib import Path
 
+import base64
 from docx import Document
 from pypdf import PdfWriter
 
 from buaa_thesis_kit.models import Metadata, ThesisModel
+
+
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def _write_minimal_docx(path: Path) -> None:
@@ -23,6 +29,15 @@ def _write_valid_pdf(path: Path) -> None:
     writer.add_blank_page(width=72, height=72)
     with path.open("wb") as handle:
         writer.write(handle)
+
+
+def _write_image_only_docx(path: Path) -> None:
+    image = path.with_suffix(".png")
+    image.write_bytes(TINY_PNG)
+    document = Document()
+    document.add_picture(str(image))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
 
 
 def test_graph_runner_revises_after_visual_compare_failure_before_finalizing(tmp_path):
@@ -218,6 +233,30 @@ def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_
     assert "论文封面书脊" in paragraphs
     assert "Book Spine" in paragraphs
     assert state.applied_repairs == ["insert_spine"]
+
+
+def test_visual_compare_blocks_pdf_word_without_editable_text(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import visual_compare
+
+    output = tmp_path / "output"
+    work = tmp_path / "work"
+    source = tmp_path / "source.pdf"
+    authoritative = tmp_path / "image-only.docx"
+    _write_valid_pdf(source)
+    _write_image_only_docx(authoritative)
+
+    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state.source_kind = "pdf"
+    state.authoritative_docx = authoritative
+    state.model = ThesisModel(
+        metadata=Metadata(title_cn="PDF Pipeline Thesis", student_id="20370001")
+    )
+
+    result = visual_compare(state)
+
+    assert result.next_node == "decide"
+    assert any("editable_text_missing" in item for item in state.blocking_items)
 
 
 def test_pipeline_report_records_graph_history_and_spine_repair(tmp_path, monkeypatch):
