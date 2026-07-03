@@ -185,6 +185,41 @@ def test_apply_word_fixes_preserves_source_body_and_inserts_spine(tmp_path):
     assert any("Repair First Thesis" in text for text in paragraphs)
 
 
+def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_spine(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import apply_word_fixes
+
+    source = tmp_path / "source.docx"
+    work = tmp_path / "output_work"
+    output = tmp_path / "output"
+    document = Document()
+    document.add_paragraph("论文封面书脊")
+    document.add_paragraph("Body text that must be preserved.")
+    document.save(source)
+
+    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state.extraction_source = source
+    state.source_kind = "docx"
+    state.repair_actions.append("insert_spine")
+    state.model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Repair First Thesis",
+            student_name="Zhang San",
+            college="Automation College",
+            major="Automation",
+            date="2026",
+        )
+    )
+
+    apply_word_fixes(state)
+
+    output_doc = Document(str(state.authoritative_docx))
+    paragraphs = [paragraph.text for paragraph in output_doc.paragraphs]
+    assert "论文封面书脊" in paragraphs
+    assert "Book Spine" in paragraphs
+    assert state.applied_repairs == ["insert_spine"]
+
+
 def test_pipeline_report_records_graph_history_and_spine_repair(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 
