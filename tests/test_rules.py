@@ -132,3 +132,15 @@ def test_agent_workflow_documents_editability_and_strict_finalization():
     assert "--strict" in workflow
     assert "strict_finalization_failed" in workflow
     assert "strict finalization mode" in roadmap
+
+
+def test_agent_workflow_documents_ocr_ledger():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    assert "OCR Ledger" in readme
+    assert "needs_ocr" in readme
+    assert "OCR Ledger" in workflow
+    assert "needs_ocr" in workflow
+    assert "pdf-page-001.png" in workflow

@@ -372,6 +372,39 @@ def test_write_report_md_includes_editability_audit(tmp_path):
     assert "- page_screenshot_drawing_count: 0" in text
 
 
+def test_build_report_and_markdown_include_ocr_ledger(tmp_path):
+    ocr_ledger = [
+        {
+            "page": 1,
+            "status": "needs_ocr",
+            "image_path": "D:/work/output/image/pdf-page-001.png",
+            "text_characters": 0,
+            "confidence": 0.0,
+            "requires_review": True,
+        }
+    ]
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "needs_review", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=["OCR required"],
+        notes=[],
+        ocr_ledger=ocr_ledger,
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    assert report["ocr_ledger"] == ocr_ledger
+    text = path.read_text(encoding="utf-8")
+    assert "## OCR Ledger" in text
+    assert "page=1" in text
+    assert "status=needs_ocr" in text
+    assert "pdf-page-001.png" in text
+
+
 def test_export_pdf_from_docx_returns_false_for_missing_source_without_junk(tmp_path):
     source = tmp_path / "missing.docx"
     pdf_path = tmp_path / "output" / "thesis.pdf"

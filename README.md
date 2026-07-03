@@ -74,6 +74,12 @@ PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只�
 不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count` 和
 `drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。
 
+## OCR 证据账本
+
+`output/report.md` 中的 `OCR Ledger` 记录扫描页和无可提取文本页。每条 ledger 至少包含页码、
+`needs_ocr` 状态、证据图片、可提取字符数、置信度和是否需要复核。证据图片会复制到
+`output/image/`，例如 `pdf-page-001.png`，但不会作为整页截图插入最终 Word 正文。
+
 ## 报告状态
 
 - `pass`：必需输出存在，且没有阻断项或人工复核项。

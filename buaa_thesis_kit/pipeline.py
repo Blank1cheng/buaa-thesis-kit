@@ -80,6 +80,7 @@ def run_pipeline(
                 notes,
                 _metadata_report(model),
                 {},
+                [],
                 strict=strict,
             )
 
@@ -114,6 +115,7 @@ def run_pipeline(
             state.notes,
             _metadata_report(model),
             state.editability,
+            _ocr_report(model),
             strict=strict,
         )
     finally:
@@ -159,6 +161,7 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
 
     def export_pdf(state: GraphState) -> NodeResult:
         state.notes.extend(_copy_final_figure_assets(state.model, image_dir))
+        state.notes.extend(_sync_ocr_ledger_images(state.model))
         state.notes.extend(_copy_final_equation_assets(state.model, image_dir))
 
         thesis_docx = state.output_root / "thesis.docx"
@@ -371,6 +374,22 @@ def _copy_final_equation_assets(model: ThesisModel, image_dir: Path) -> list[str
     return notes
 
 
+def _sync_ocr_ledger_images(model: ThesisModel) -> list[str]:
+    notes: list[str] = []
+    page_images = {
+        figure.source.page_hint: figure.path
+        for figure in model.figures
+        if figure.type == "pdf-page-image" and figure.source is not None and figure.source.page_hint is not None
+    }
+    for item in model.ocr_ledger:
+        image_path = page_images.get(item.page)
+        if image_path:
+            item.image_path = image_path
+        elif item.requires_review:
+            notes.append(f"OCR ledger page {item.page} has no public evidence image.")
+    return notes
+
+
 def _safe_asset_name(name: str) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name).strip("._")
     return safe_name or "asset.bin"
@@ -456,6 +475,17 @@ def _metadata_report(model: ThesisModel) -> dict[str, dict[str, Any]]:
     return report
 
 
+def _ocr_report(model: ThesisModel) -> list[dict[str, Any]]:
+    return [
+        {
+            key: value
+            for key, value in item.to_dict().items()
+            if key != "source"
+        }
+        for item in model.ocr_ledger
+    ]
+
+
 def _model_failed_message(model: ThesisModel) -> str:
     details = "; ".join(model.extraction_warnings) if model.extraction_warnings else "no details"
     return f"Extraction failed: {details}"
@@ -488,6 +518,7 @@ def _finalize_report(
     notes: list[str],
     metadata: dict[str, Any],
     editability: dict[str, Any],
+    ocr_ledger: list[dict[str, Any]],
     strict: bool = False,
 ) -> dict[str, Any]:
     report_path = output_root / "report.md"
@@ -501,6 +532,7 @@ def _finalize_report(
         notes=_dedupe(notes),
         metadata=metadata,
         editability=editability,
+        ocr_ledger=ocr_ledger,
     )
     write_report_md(report, report_path)
 
@@ -524,6 +556,7 @@ def _finalize_report(
         notes=_dedupe(final_notes),
         metadata=metadata,
         editability=editability,
+        ocr_ledger=ocr_ledger,
     )
     write_report_md(final_report, report_path)
     return final_report

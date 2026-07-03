@@ -92,6 +92,22 @@ class EquationItem:
 
 
 @dataclass
+class OcrLedgerItem:
+    page: int
+    status: str
+    image_path: str = ""
+    text_characters: int = 0
+    confidence: float = 0.0
+    requires_review: bool = True
+    source: SourceEvidence | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["source"] = self.source.to_dict() if self.source else None
+        return data
+
+
+@dataclass
 class ThesisModel:
     metadata: Metadata = field(default_factory=Metadata)
     front_matter: dict[str, Any] = field(default_factory=dict)
@@ -101,6 +117,7 @@ class ThesisModel:
     equations: list[EquationItem] = field(default_factory=list)
     references: list[ContentBlock] = field(default_factory=list)
     appendices: list[ContentBlock] = field(default_factory=list)
+    ocr_ledger: list[OcrLedgerItem] = field(default_factory=list)
     extraction_warnings: list[str] = field(default_factory=list)
     status: Status = "draft"
 
@@ -114,6 +131,7 @@ class ThesisModel:
             "equations": [x.to_dict() for x in self.equations],
             "references": [x.to_dict() for x in self.references],
             "appendices": [x.to_dict() for x in self.appendices],
+            "ocr_ledger": [x.to_dict() for x in self.ocr_ledger],
             "extraction_warnings": copy.deepcopy(self.extraction_warnings),
             "status": self.status,
         }

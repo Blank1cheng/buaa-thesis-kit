@@ -90,6 +90,7 @@ def build_report(
     notes: list[str],
     metadata: dict[str, Any] | None = None,
     editability: dict[str, Any] | None = None,
+    ocr_ledger: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     output_statuses = [_normalize_status(status) for status in outputs.values()]
     missing_required = _missing_required_report_outputs(outputs)
@@ -115,6 +116,8 @@ def build_report(
         report["metadata"] = metadata
     if editability is not None:
         report["editability"] = editability
+    if ocr_ledger is not None:
+        report["ocr_ledger"] = ocr_ledger
     return report
 
 
@@ -142,6 +145,10 @@ def write_report_md(report: dict[str, Any], path: Path) -> None:
         "## Editability Audit",
         "",
         *_format_mapping(report.get("editability", {})),
+        "",
+        "## OCR Ledger",
+        "",
+        *_format_ocr_ledger(report.get("ocr_ledger", [])),
         "",
         "## Metadata",
         "",
@@ -240,4 +247,25 @@ def _format_metadata(metadata: Any) -> list[str]:
                     lines.append(f"  evidence: {', '.join(evidence_parts)}")
         else:
             lines.append(f"- {field}: {payload}")
+    return lines
+
+
+def _format_ocr_ledger(items: Any) -> list[str]:
+    if not items:
+        return ["- None"]
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            lines.append(f"- {item}")
+            continue
+        image_name = Path(str(item.get("image_path", ""))).name
+        parts = [
+            f"page={item.get('page', '')}",
+            f"status={item.get('status', '')}",
+            f"image={image_name}",
+            f"text_characters={item.get('text_characters', 0)}",
+            f"confidence={item.get('confidence', 0.0)}",
+            f"requires_review={item.get('requires_review', True)}",
+        ]
+        lines.append(f"- {', '.join(parts)}")
     return lines

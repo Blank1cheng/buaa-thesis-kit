@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from buaa_thesis_kit.models import AssetItem, ContentBlock, Metadata, SourceEvidence, ThesisModel
+from buaa_thesis_kit.models import (
+    AssetItem,
+    ContentBlock,
+    Metadata,
+    OcrLedgerItem,
+    SourceEvidence,
+    ThesisModel,
+)
 
 
 SOURCE_PDF_NAME = "source.pdf"
@@ -143,6 +150,7 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
             else:
                 figure = _render_page_image(page, work, page_index + 1)
                 model.figures.append(figure)
+                model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1))
                 model.extraction_warnings.append(
                     f"OCR required: PDF page {page_index + 1} has no extractable text; page image rendered for review."
                 )
@@ -206,6 +214,18 @@ def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:
             requires_review=True,
         ),
         requires_review=True,
+    )
+
+
+def _ocr_ledger_item(figure: AssetItem, page_number: int) -> OcrLedgerItem:
+    return OcrLedgerItem(
+        page=page_number,
+        status="needs_ocr",
+        image_path=figure.path,
+        text_characters=0,
+        confidence=0.0,
+        requires_review=True,
+        source=figure.source,
     )
 
 

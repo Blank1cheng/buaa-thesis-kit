@@ -378,4 +378,10 @@ def test_extract_blank_pdf_renders_page_image_and_marks_ocr_review(tmp_path):
     assert Path(model.figures[0].path).is_file()
     assert model.figures[0].path.endswith(".png")
     assert model.figures[0].requires_review is True
+    assert len(model.ocr_ledger) == 1
+    assert model.ocr_ledger[0].page == 1
+    assert model.ocr_ledger[0].status == "needs_ocr"
+    assert model.ocr_ledger[0].image_path.endswith("pdf-page-001.png")
+    assert model.ocr_ledger[0].confidence == 0.0
+    assert model.ocr_ledger[0].requires_review is True
     assert any("ocr" in warning.lower() for warning in model.extraction_warnings)

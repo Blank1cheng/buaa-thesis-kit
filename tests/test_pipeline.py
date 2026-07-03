@@ -317,6 +317,16 @@ def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_scre
 
     assert report["status"] == "needs_review"
     assert (output / "image" / "pdf-page-001.png").is_file()
+    assert report["ocr_ledger"] == [
+        {
+            "page": 1,
+            "status": "needs_ocr",
+            "image_path": str((output / "image" / "pdf-page-001.png").resolve(strict=False)),
+            "text_characters": 0,
+            "confidence": 0.0,
+            "requires_review": True,
+        }
+    ]
     assert any("ocr" in item.lower() for item in report["manual_review"])
     with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
         document_xml = docx_zip.read("word/document.xml").decode("utf-8")
@@ -326,6 +336,10 @@ def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_scre
     tex = (output / "thesis.tex").read_text(encoding="utf-8")
     assert "pdf-page-001.png" in tex
     assert "\\includegraphics" not in tex
+    report_text = (output / "report.md").read_text(encoding="utf-8")
+    assert "## OCR Ledger" in report_text
+    assert "page=1" in report_text
+    assert "pdf-page-001.png" in report_text
 
 
 def test_run_pipeline_doc_input_converts_to_docx_before_extraction(tmp_path, monkeypatch):

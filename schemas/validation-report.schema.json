@@ -19,6 +19,20 @@
         "media_count": {"type": "integer", "minimum": 0}
       }
     },
+    "ocr_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page": {"type": "integer", "minimum": 1},
+          "status": {"type": "string"},
+          "image_path": {"type": "string"},
+          "text_characters": {"type": "integer", "minimum": 0},
+          "confidence": {"type": "number"},
+          "requires_review": {"type": "boolean"}
+        }
+      }
+    },
     "blocking_items": {"type": "array", "items": {"type": "string"}},
     "manual_review": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}}
