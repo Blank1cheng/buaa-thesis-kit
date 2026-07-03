@@ -160,3 +160,37 @@ def test_render_editable_buaa_docx_preserves_omml_equations_as_word_math(tmp_pat
     assert "<m:oMathPara" in document_xml
     assert "<m:t>x+y</m:t>" in document_xml
     assert "[Equation requires review]" not in document_xml
+
+
+def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp_path):
+    declaration = "\u672c\u4eba\u58f0\u660e"
+    chinese_abstract = "\u6458\u8981"
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Paged Front Matter Thesis",
+            student_name="Zhang San",
+            student_id="20370001",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-06",
+            classification="TP273",
+        ),
+        sections=[
+            ContentBlock(id="task", type="section", title="", text="Task book body."),
+            ContentBlock(id="declare", type="section", title=declaration, text="Declaration body."),
+            ContentBlock(id="abstract-cn", type="section", title=chinese_abstract, text="Chinese abstract body."),
+            ContentBlock(id="body", type="chapter", title="1 Introduction", text="Body text.", level=1),
+        ],
+    )
+    output = tmp_path / "front-matter-pages.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    document = Document(str(output))
+    paragraphs = list(document.paragraphs)
+    paragraph_texts = [paragraph.text for paragraph in paragraphs]
+    for marker in (declaration, chinese_abstract, "1 Introduction"):
+        index = paragraph_texts.index(marker)
+        previous_xml = paragraphs[index - 1]._p.xml
+        assert '<w:br w:type="page"' in previous_xml

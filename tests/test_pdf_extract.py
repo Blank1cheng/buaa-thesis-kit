@@ -147,6 +147,59 @@ def test_extract_content_skips_buaa_cover_and_spine_but_keeps_task_book():
     assert "这是正文内容。" in combined
 
 
+def test_extract_content_splits_front_matter_and_skips_toc_entries():
+    declaration = "\u672c\u4eba\u58f0\u660e"
+    chinese_abstract = "\u6458\u8981"
+    toc = "\u76ee\u5f55"
+    introduction = "1 \u7eea\u8bba"
+    topic_source = "1.1 \u8bfe\u9898\u6765\u6e90"
+    lines = [
+        PdfLine(index=0, page=3, text="\u5317\u4eac\u822a\u7a7a\u822a\u5929\u5927\u5b66"),
+        PdfLine(index=1, page=3, text="\u672c\u79d1\u751f\u6bd5\u4e1a\u8bbe\u8ba1\uff08\u8bba\u6587\uff09\u4efb\u52a1\u4e66"),
+        PdfLine(index=2, page=3, text="\u4efb\u52a1\u4e66\u5185\u5bb9"),
+        PdfLine(index=3, page=4, text=declaration),
+        PdfLine(index=4, page=4, text="\u58f0\u660e\u5185\u5bb9"),
+        PdfLine(index=5, page=5, text="Student preamble that belongs to abstract page"),
+        PdfLine(index=6, page=5, text="\u6458"),
+        PdfLine(index=7, page=5, text="\u8981"),
+        PdfLine(index=8, page=5, text="\u4e2d\u6587\u6458\u8981\u5185\u5bb9"),
+        PdfLine(index=9, page=6, text="Research on data-driven thesis title"),
+        PdfLine(index=10, page=6, text="Author : Zhang San"),
+        PdfLine(index=11, page=6, text="Tutor : Li Si"),
+        PdfLine(index=12, page=6, text="Abstract"),
+        PdfLine(index=13, page=6, text="English abstract body."),
+        PdfLine(index=14, page=7, text="\u76ee"),
+        PdfLine(index=15, page=7, text="\u5f55"),
+        PdfLine(index=16, page=7, text=f"{introduction}...................................................................... 1"),
+        PdfLine(index=17, page=7, text=f"{topic_source}........................................................1"),
+        PdfLine(index=18, page=7, text="2.2.1"),
+        PdfLine(index=19, page=7, text="Split TOC continuation................................................18"),
+        PdfLine(index=20, page=8, text="1"),
+        PdfLine(index=21, page=8, text="\u7eea\u8bba"),
+        PdfLine(index=22, page=8, text=topic_source),
+        PdfLine(index=23, page=8, text="\u6b63\u6587\u5185\u5bb9"),
+    ]
+
+    sections, _references = _extract_content(lines)
+    titles = [section.title for section in sections]
+    combined = "\n".join([section.title + "\n" + section.text for section in sections])
+
+    assert declaration in titles
+    assert chinese_abstract in titles
+    assert "Abstract" in titles
+    assert introduction in titles
+    assert topic_source in titles
+    assert toc not in combined
+    declaration_section = next(section for section in sections if section.title == declaration)
+    cn_abstract_section = next(section for section in sections if section.title == chinese_abstract)
+    assert "Student preamble" not in declaration_section.text
+    assert "Research on data-driven" not in cn_abstract_section.text
+    assert "Author :" not in cn_abstract_section.text
+    assert "Tutor :" not in cn_abstract_section.text
+    assert "Split TOC continuation" not in combined
+    assert "................................................................" not in combined
+
+
 def test_extract_blank_pdf_renders_page_image_and_marks_ocr_review(tmp_path):
     source = tmp_path / "blank.pdf"
     work = tmp_path / "work"

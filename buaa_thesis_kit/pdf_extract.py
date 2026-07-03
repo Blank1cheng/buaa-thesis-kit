@@ -33,6 +33,12 @@ FIELD_LABELS: dict[str, tuple[str, ...]] = {
 }
 REQUIRED_METADATA = ("title_cn", "student_name", "student_id", "college", "major", "advisor", "date")
 REFERENCE_HEADINGS = {"references", "reference", "参考文献"}
+TOC_HEADINGS = {"目录", "目 录", "contents", "table of contents"}
+SPLIT_HEADING_PAIRS = {
+    ("摘", "要"): "摘要",
+    ("目", "录"): "目录",
+}
+FRONT_MATTER_HEADINGS = {"本人声明", "摘要", "Abstract"}
 NEXT_LINE_LABELS: dict[str, str] = {
     "单位代码": "unit_code",
     "学校代码": "unit_code",
@@ -343,12 +349,46 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
     sections: list[ContentBlock] = []
     references: list[ContentBlock] = []
     current_title = "PDF Extracted Text"
+    current_title_page: int | None = None
     current_text: list[str] = []
     in_references = False
+    in_toc = False
 
-    for line in _content_lines_without_buaa_cover_spine(lines):
+    content_lines = _merge_split_headings(_content_lines_without_buaa_cover_spine(lines))
+    index = 0
+    while index < len(content_lines):
+        line = content_lines[index]
+        index += 1
         text = line.text
         if _is_metadata_line(text):
+            continue
+        if _is_toc_heading(text):
+            _flush_section(sections, current_title, current_text, line)
+            current_title = "PDF Extracted Text"
+            current_title_page = None
+            current_text = []
+            in_toc = True
+            continue
+        if in_toc:
+            following = content_lines[index] if index < len(content_lines) else None
+            if following is not None and _can_merge_numbered_heading(line, following):
+                candidate_text = f"{text} {following.text}"
+                if _looks_like_heading(candidate_text) and not _looks_like_toc_entry(candidate_text):
+                    line = PdfLine(index=line.index, page=line.page, text=candidate_text)
+                    text = candidate_text
+                    index += 1
+                    in_toc = False
+                else:
+                    continue
+            elif not _looks_like_heading(text) or _looks_like_toc_entry(text):
+                continue
+            else:
+                in_toc = False
+        if _is_front_matter_heading(text):
+            _flush_section(sections, current_title, current_text, line)
+            current_title = text
+            current_title_page = line.page
+            current_text = []
             continue
         if text.strip().casefold() in REFERENCE_HEADINGS:
             _flush_section(sections, current_title, current_text, line)
@@ -369,7 +409,10 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
         if _looks_like_heading(text):
             _flush_section(sections, current_title, current_text, line)
             current_title = text
+            current_title_page = line.page
             current_text = []
+            continue
+        if _is_front_matter_spillover(current_title, current_title_page, line):
             continue
         current_text.append(text)
 
@@ -377,6 +420,38 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
         last = lines[-1] if lines else None
         _flush_section(sections, current_title, current_text, last)
     return sections, references
+
+
+def _merge_split_headings(lines: list[PdfLine]) -> list[PdfLine]:
+    merged: list[PdfLine] = []
+    index = 0
+    while index < len(lines):
+        current = lines[index]
+        following = lines[index + 1] if index + 1 < len(lines) else None
+        pair = (current.text, following.text) if following is not None else None
+        if following is not None and pair in SPLIT_HEADING_PAIRS:
+            merged.append(
+                PdfLine(
+                    index=current.index,
+                    page=current.page,
+                    text=SPLIT_HEADING_PAIRS[pair],
+                )
+            )
+            index += 2
+            continue
+        merged.append(current)
+        index += 1
+    return merged
+
+
+def _can_merge_numbered_heading(current: PdfLine, following: PdfLine) -> bool:
+    if current.page != following.page:
+        return False
+    if not re.fullmatch(r"\d+", current.text.strip()):
+        return False
+    if not following.text.strip() or re.match(r"^\d", following.text.strip()):
+        return False
+    return len(following.text.strip()) <= 80
 
 
 def _content_lines_without_buaa_cover_spine(lines: list[PdfLine]) -> list[PdfLine]:
@@ -428,13 +503,14 @@ def _flush_section(
     text = "\n".join(line for line in text_lines if line).strip()
     if not text and title == "PDF Extracted Text":
         return
+    level = _heading_level(title) if _looks_like_heading(title) else 1
     sections.append(
         ContentBlock(
             id=f"section-{len(sections) + 1}",
-            type="chapter" if _looks_like_heading(title) else "section",
+            type="chapter" if level == 1 and _looks_like_heading(title) else "section",
             title=title,
             text=text,
-            level=1,
+            level=level,
             source=_line_source(evidence_line, "pdf-section-text") if evidence_line else None,
         )
     )
@@ -465,6 +541,36 @@ def _metadata_warnings(metadata: Metadata) -> list[str]:
 
 def _looks_like_heading(text: str) -> bool:
     return bool(re.match(r"^\s*\d+(?:\.\d+)*\s+\S+", text))
+
+
+def _heading_level(text: str) -> int:
+    match = re.match(r"^\s*(\d+(?:\.\d+)*)\s+\S+", text)
+    if not match:
+        return 1
+    return match.group(1).count(".") + 1
+
+
+def _is_toc_heading(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+    return normalized in {heading.casefold() for heading in TOC_HEADINGS}
+
+
+def _looks_like_toc_entry(text: str) -> bool:
+    return bool(re.search(r"(?:\.{3,}|…{2,}|·{3,})\s*\d+\s*$", str(text or "")))
+
+
+def _is_front_matter_heading(text: str) -> bool:
+    return str(text or "").strip() in FRONT_MATTER_HEADINGS
+
+
+def _is_front_matter_spillover(title: str, title_page: int | None, line: PdfLine) -> bool:
+    if title_page is None:
+        return False
+    if title == "本人声明":
+        return line.page != title_page
+    if title == "摘要":
+        return line.page != title_page and not _contains_cjk(line.text)
+    return False
 
 
 def _is_metadata_line(text: str) -> bool:

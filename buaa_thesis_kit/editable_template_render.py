@@ -160,12 +160,28 @@ def _append_spine_page(document, metadata: Metadata) -> None:
 def _append_model_content(document, model: ThesisModel) -> None:
     document.add_page_break()
     _add_abstracts(document, model)
-    _add_sections(document, _sections_without_pdf_placeholder_heading(model.sections))
+    _add_sections_with_page_breaks(document, _sections_without_pdf_placeholder_heading(model.sections))
     _add_tables(document, model.tables)
     _add_figures(document, model.figures)
     _add_equations(document, model.equations)
     _add_references(document, model.references)
     _add_appendices(document, model.appendices)
+
+
+def _add_sections_with_page_breaks(document, sections: list[ContentBlock]) -> None:
+    first = True
+    for section in sections:
+        if not first and _section_starts_new_page(section):
+            document.add_page_break()
+        _add_sections(document, [section])
+        first = False
+
+
+def _section_starts_new_page(section: ContentBlock) -> bool:
+    title = _metadata_value(section.title)
+    if title in {"本人声明", "摘要", "Abstract"}:
+        return True
+    return section.level <= 1 and bool(re.match(r"^\d+\s+\S+", title))
 
 
 def _sections_without_pdf_placeholder_heading(sections: list[ContentBlock]) -> list[ContentBlock]:
