@@ -5,7 +5,7 @@ from xml.sax.saxutils import escape
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
-SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_{}\\\s+\-*/=().,<>^]+$")
+SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_{}\\\s+\-*/=().,<>^&]+$")
 GREEK_MACROS = {
     "alpha": 0x03B1,
     "beta": 0x03B2,
@@ -25,6 +25,11 @@ GREEK_MACROS = {
 NARY_MACROS = {
     "sum": 0x2211,
     "int": 0x222B,
+}
+MATRIX_DELIMITERS = {
+    "matrix": ("", ""),
+    "bmatrix": ("[", "]"),
+    "pmatrix": ("(", ")"),
 }
 
 
@@ -102,6 +107,11 @@ class _LinearMathParser:
             if not radicand:
                 return ""
             return _radical(radicand)
+        if name == "begin":
+            environment = self._parse_required_group_text()
+            if environment not in MATRIX_DELIMITERS:
+                return ""
+            return self._parse_matrix_environment(environment)
         if name in GREEK_MACROS:
             return self._apply_scripts(_run(chr(GREEK_MACROS[name])))
         if name in NARY_MACROS:
@@ -113,14 +123,35 @@ class _LinearMathParser:
         return ""
 
     def _parse_required_group(self) -> str:
+        group_text = self._parse_required_group_text()
+        if not group_text:
+            return ""
+        return _parse_fragment(group_text)
+
+    def _parse_required_group_text(self) -> str:
         if self._peek() != "{":
             return ""
-        self.index += 1
-        body = self._parse_sequence(stop_char="}")
-        if not body or self._peek() != "}":
+        end = _find_simple_group_end(self.source, self.index)
+        if end < 0:
             return ""
-        self.index += 1
-        return body
+        value = self.source[self.index + 1 : end].strip()
+        self.index = end + 1
+        return value
+
+    def _parse_matrix_environment(self, environment: str) -> str:
+        end_marker = f"\\end{{{environment}}}"
+        end_index = self.source.find(end_marker, self.index)
+        if end_index < 0:
+            return ""
+        content = self.source[self.index : end_index].strip()
+        self.index = end_index + len(end_marker)
+        matrix = _matrix_from_latex_body(content)
+        if not matrix:
+            return ""
+        left, right = MATRIX_DELIMITERS[environment]
+        if left or right:
+            return _delimiter(left, right, matrix)
+        return matrix
 
     def _parse_identifier(self) -> str:
         base = self._consume_identifier()
@@ -215,6 +246,37 @@ def _radical(radicand: str) -> str:
     return f"<m:rad><m:deg/><m:e>{radicand}</m:e></m:rad>"
 
 
+def _delimiter(left: str, right: str, body: str) -> str:
+    return (
+        f'<m:d><m:dPr><m:begChr m:val="{escape(left)}"/>'
+        f'<m:endChr m:val="{escape(right)}"/></m:dPr><m:e>{body}</m:e></m:d>'
+    )
+
+
+def _matrix_from_latex_body(content: str) -> str:
+    rows: list[list[str]] = []
+    for row_text in re.split(r"\s*\\\\\s*", content.strip()):
+        if not row_text.strip():
+            return ""
+        row: list[str] = []
+        for cell_text in row_text.split("&"):
+            cell_body = _parse_fragment(cell_text.strip())
+            if not cell_body:
+                return ""
+            row.append(cell_body)
+        rows.append(row)
+    if not rows:
+        return ""
+    column_count = len(rows[0])
+    if column_count == 0 or any(len(row) != column_count for row in rows):
+        return ""
+    rendered_rows = "".join(
+        "<m:mr>" + "".join(f"<m:e>{cell}</m:e>" for cell in row) + "</m:mr>"
+        for row in rows
+    )
+    return f"<m:m>{rendered_rows}</m:m>"
+
+
 def _nary(symbol: str, subscript: str, superscript: str) -> str:
     return (
         f'<m:nary><m:naryPr><m:chr m:val="{escape(symbol)}"/>'
@@ -249,6 +311,17 @@ def _find_simple_group_end(source: str, start: int) -> int:
             if depth == 0:
                 return index
     return -1
+
+
+def _parse_fragment(source: str) -> str:
+    value = str(source or "").strip()
+    if not value or not SAFE_TEXT_RE.fullmatch(value):
+        return ""
+    parser = _LinearMathParser(value)
+    body = parser.parse()
+    if not body or parser.index != len(value):
+        return ""
+    return body
 
 
 __all__ = ["latex_to_omml"]

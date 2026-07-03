@@ -164,6 +164,8 @@ def test_agent_workflow_documents_equation_ledger():
         assert "sum" in text
         assert "int" in text
         assert "Greek" in text
+        assert "bmatrix" in text
+        assert "pmatrix" in text
         assert "latex_needs_review" in text
         assert "preview_image_needs_review" in text
 

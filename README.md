@@ -98,7 +98,7 @@ Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
 `output/report.md` 中的 `Equation Ledger` 记录每个公式在最终 Word 中的可编辑状态。`editable_omml`
 表示可编辑 Word 公式，`editable_ole_object` 表示保留了可编辑 OLE/MathType 对象，`trusted_latex`
 表示可由可信 LaTeX 结构恢复。PDF 文本层中的 safe linear equation，以及受支持的 `frac`/`sqrt`、
-`sum`/`int` 和 Greek
+`sum`/`int`、Greek、`bmatrix`/`pmatrix`
 宏，只有在解析器能够完整转换为 OMML 时才标记为 `editable_omml`；`latex_needs_review` 表示公式样式文本已经进入账本但仍需要复核并
 转换为可编辑 Word 公式。`preview_image_needs_review` 和 `manual_transcription_required` 不能静默通过，
 必须由 agent 或人工转写成可编辑公式后再进入最终验收。

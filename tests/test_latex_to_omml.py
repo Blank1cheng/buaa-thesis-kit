@@ -67,6 +67,31 @@ def test_latex_to_omml_converts_integral_with_limits():
     assert "<m:t>T</m:t>" in omml
 
 
+def test_latex_to_omml_converts_bmatrix_environment():
+    omml = latex_to_omml(r"A = \begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix}")
+
+    assert "<m:oMathPara" in omml
+    assert "<m:d>" in omml
+    assert '<m:begChr m:val="["/>' in omml
+    assert '<m:endChr m:val="]"/>' in omml
+    assert "<m:m>" in omml
+    assert omml.count("<m:mr>") == 2
+    assert omml.count("<m:e>") >= 4
+    assert "<m:t>1</m:t>" in omml
+    assert "<m:t>0</m:t>" in omml
+
+
+def test_latex_to_omml_converts_pmatrix_environment():
+    omml = latex_to_omml(r"P = \begin{pmatrix} a & b \\ c & d \end{pmatrix}")
+
+    assert "<m:oMathPara" in omml
+    assert '<m:begChr m:val="("/>' in omml
+    assert '<m:endChr m:val=")"/>' in omml
+    assert "<m:m>" in omml
+    assert "<m:t>a</m:t>" in omml
+    assert "<m:t>d</m:t>" in omml
+
+
 def test_latex_to_omml_rejects_unsupported_latex_macros():
     assert latex_to_omml(r"x = \unknown{x}") == ""
 
@@ -74,3 +99,7 @@ def test_latex_to_omml_rejects_unsupported_latex_macros():
 def test_latex_to_omml_rejects_malformed_scripts():
     assert latex_to_omml("x_{} = y") == ""
     assert latex_to_omml("x_i_j = y") == ""
+
+
+def test_latex_to_omml_rejects_ragged_matrix_rows():
+    assert latex_to_omml(r"A = \begin{bmatrix} 1 & 0 \\ 1 \end{bmatrix}") == ""

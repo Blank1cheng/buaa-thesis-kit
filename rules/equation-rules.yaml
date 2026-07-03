@@ -17,6 +17,8 @@ equations:
     - sum
     - int
     - Greek
+    - bmatrix
+    - pmatrix
 manual_review:
   - mathtype_ole
   - image_equation
