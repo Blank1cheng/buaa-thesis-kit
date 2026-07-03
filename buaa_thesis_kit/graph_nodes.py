@@ -5,9 +5,9 @@ from pathlib import Path
 
 from docx import Document
 
+from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata
-from buaa_thesis_kit.pdf_visual_render import render_pdf_pages_as_docx
 from buaa_thesis_kit.template_fill import fill_word_template
 
 
@@ -52,16 +52,19 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
         shutil.copy2(Path(state.extraction_source), repaired_docx)
         document = Document(str(repaired_docx))
     elif state.source_kind == "pdf":
+        if state.template_path is None:
+            state.blocking_items.append("Editable PDF-to-Word generation failed: missing Word template.")
+            return NodeResult(next_node="export_pdf")
         try:
-            page_count = render_pdf_pages_as_docx(Path(state.extraction_source), repaired_docx, state.work_dir)
+            render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
         except Exception as exc:
-            state.blocking_items.append(f"PDF visual-preserving Word generation failed: {exc}")
+            state.blocking_items.append(f"Editable PDF-to-Word template generation failed: {exc}")
             return NodeResult(next_node="export_pdf")
         state.notes.append(
-            f"PDF visual-preserving Word generated from {page_count} rendered source pages."
+            "Editable BUAA template Word generated from extracted PDF content."
         )
         state.manual_review.append(
-            "PDF visual-preserving DOCX uses page images; text extraction remains auxiliary for metadata and TeX."
+            "PDF source requires manual review for equations, figures, and any layout not recoverable as editable Word objects."
         )
         document = Document(str(repaired_docx))
     else:
@@ -75,6 +78,9 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
         _append_spine_page(document, state.model.metadata)
         _append_once(state.applied_repairs, "insert_spine")
         _append_once(state.notes, "Applied repair insert_spine for missing_spine.")
+    elif "insert_spine" in state.repair_actions and _document_has_spine(document):
+        _append_once(state.applied_repairs, "insert_spine")
+        _append_once(state.notes, "Applied repair insert_spine via BUAA editable template.")
 
     document.save(str(repaired_docx))
     state.authoritative_docx = repaired_docx

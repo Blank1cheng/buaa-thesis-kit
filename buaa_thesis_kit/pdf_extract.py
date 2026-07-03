@@ -36,6 +36,10 @@ REFERENCE_HEADINGS = {"references", "reference", "参考文献"}
 NEXT_LINE_LABELS: dict[str, str] = {
     "单位代码": "unit_code",
     "学校代码": "unit_code",
+    "分类号": "classification",
+    "1分类号": "classification",
+    "1 分类号": "classification",
+    "中图分类号": "classification",
 }
 VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("学", "号"), "student_id"),
@@ -45,6 +49,8 @@ VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("指", "导", "教", "师"), "advisor"),
 )
 TITLE_ANCHORS = {"毕业设计(论文)", "毕业设计（论文）", "本科毕业设计(论文)", "本科毕业设计（论文）"}
+BUAA_SPINE_MARKER = "论文封面书脊"
+BUAA_TASK_BOOK_TITLE = "本科生毕业设计（论文）任务书"
 
 
 def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
@@ -340,7 +346,7 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
     current_text: list[str] = []
     in_references = False
 
-    for line in lines:
+    for line in _content_lines_without_buaa_cover_spine(lines):
         text = line.text
         if _is_metadata_line(text):
             continue
@@ -371,6 +377,46 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
         last = lines[-1] if lines else None
         _flush_section(sections, current_title, current_text, last)
     return sections, references
+
+
+def _content_lines_without_buaa_cover_spine(lines: list[PdfLine]) -> list[PdfLine]:
+    if not _looks_like_buaa_cover_with_spine(lines):
+        return lines
+
+    start_index = _first_line_after_buaa_cover_spine(lines)
+    if start_index is None:
+        return lines
+    return lines[start_index:]
+
+
+def _looks_like_buaa_cover_with_spine(lines: list[PdfLine]) -> bool:
+    first_lines = lines[:160]
+    has_cover_anchor = any(line.text in TITLE_ANCHORS for line in first_lines)
+    has_spine_marker = any(BUAA_SPINE_MARKER in line.text for line in first_lines)
+    return has_cover_anchor and has_spine_marker
+
+
+def _first_line_after_buaa_cover_spine(lines: list[PdfLine]) -> int | None:
+    for index, line in enumerate(lines):
+        if line.page <= 2:
+            continue
+        if line.text == "北京航空航天大学" and _next_line_contains(lines, index, BUAA_TASK_BOOK_TITLE):
+            return index
+        if BUAA_TASK_BOOK_TITLE in line.text:
+            return max(0, index - 1) if index > 0 and lines[index - 1].text == "北京航空航天大学" else index
+        if line.text in {"摘 要", "摘要", "ABSTRACT", "Abstract"}:
+            return index
+        if line.page > 2 and _looks_like_heading(line.text):
+            return index
+
+    for index, line in enumerate(lines):
+        if line.page > 2:
+            return index
+    return None
+
+
+def _next_line_contains(lines: list[PdfLine], index: int, text: str) -> bool:
+    return index + 1 < len(lines) and text in lines[index + 1].text
 
 
 def _flush_section(

@@ -2,7 +2,7 @@
 
 ## 1. 接收与备份
 
-先复制源 Word/PDF 到工作区，保留原文件不改。若同时有 Word 和 PDF，以 Word 为权威源；若只有 Word，则最终 PDF 从 Word 导出；若只有 PDF，只能做结构诊断或请求补充 Word。
+先复制源 Word/PDF 到工作区，保留原文件不改。若同时有 Word 和 PDF，以 Word 为权威源；若只有 Word，则最终 PDF 从 Word 导出；若只有 PDF，先做文本、元数据和结构抽取，再套用统一 Word 模板生成可编辑 DOCX，并在报告中标记布局、公式和图表复核风险。
 
 ## 2. 结构识别
 
@@ -10,7 +10,7 @@
 
 ## 3. 模板填充
 
-使用 `templates/buaa_undergraduate_thesis_template.docx` 生成权威 Word 输出，使用 `templates/buaa_undergraduate_thesis_template.tex` 生成辅助 TeX。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
+使用 `templates/buaa_undergraduate_thesis_template.docx` 生成权威 Word 输出，使用 `templates/buaa_undergraduate_thesis_template.tex` 生成辅助 TeX。PDF 输入也必须生成可编辑 Word：封面、书脊、任务书和正文由模板文本渲染，不得把整页 PDF 截图嵌入最终 Word。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
 
 ## 4. 校验与报告
 

@@ -194,7 +194,7 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     assert "PDF Pipeline Thesis" in (output / "thesis.tex").read_text(encoding="utf-8")
 
 
-def test_run_pipeline_pdf_input_uses_visual_preserving_docx_not_text_reflow(tmp_path, monkeypatch):
+def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 
     source = tmp_path / "source.pdf"
@@ -205,16 +205,13 @@ def test_run_pipeline_pdf_input_uses_visual_preserving_docx_not_text_reflow(tmp_
     report = pipeline.run_pipeline(source, output)
 
     assert report["status"] == "needs_review"
-    assert any("visual-preserving" in note for note in report["notes"])
+    assert not any("visual-preserving" in note for note in report["notes"])
     with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
         document_xml = docx_zip.read("word/document.xml").decode("utf-8")
-        media_files = [
-            name
-            for name in docx_zip.namelist()
-            if name.startswith("word/media/") and name.lower().endswith(".png")
-        ]
 
-    assert media_files
+    assert "PDF Pipeline Thesis" in document_xml
+    assert "This PDF contains extractable thesis text." in document_xml
+    assert "20370001" in document_xml
     assert "PDF Extracted Text" not in document_xml
 
 
