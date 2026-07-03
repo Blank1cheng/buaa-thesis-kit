@@ -5,6 +5,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
+from xml.etree import ElementTree as ET
 
 from docx import Document
 
@@ -13,6 +14,9 @@ from buaa_thesis_kit.models import Metadata
 
 SPINE_MARKERS = ("Book Spine", "书脊")
 PDF_PLACEHOLDER_HEADING = "PDF Extracted Text"
+EMU_PER_INCH = 914400
+PAGE_SCREENSHOT_MIN_WIDTH_IN = 5.0
+PAGE_SCREENSHOT_MIN_HEIGHT_IN = 7.4
 
 
 @dataclass
@@ -57,6 +61,13 @@ def inspect_docx_output(
         package_info,
         source_kind=source_kind,
     )
+
+    if source_kind.lower() == "pdf" and package_info["page_screenshot_drawing_count"]:
+        result.blocking_items.append(
+            "word_page_screenshot: PDF-derived Word output contains "
+            f"{package_info['page_screenshot_drawing_count']} page-sized drawing(s); "
+            "keep page renders only as OCR evidence and rebuild Word content as editable text/tables/equations."
+        )
 
     if PDF_PLACEHOLDER_HEADING in visible_text:
         result.blocking_items.append(
@@ -123,10 +134,44 @@ def _inspect_docx_package(path: Path) -> dict[str, int]:
     with zipfile.ZipFile(path) as package:
         names = package.namelist()
         document_xml = package.read("word/document.xml").decode("utf-8", errors="replace")
+    drawing_sizes = _drawing_sizes(document_xml)
     return {
         "media_count": sum(1 for name in names if name.startswith("word/media/")),
         "drawing_count": document_xml.count("<w:drawing"),
+        "page_screenshot_drawing_count": sum(
+            1 for width, height in drawing_sizes if _looks_like_page_screenshot(width, height)
+        ),
     }
+
+
+def _drawing_sizes(document_xml: str) -> list[tuple[float, float]]:
+    namespaces = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    }
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError:
+        return []
+
+    sizes: list[tuple[float, float]] = []
+    for drawing in root.findall(".//w:drawing", namespaces):
+        extent = drawing.find(".//wp:extent", namespaces)
+        if extent is None:
+            continue
+        try:
+            width = int(extent.attrib.get("cx", "0")) / EMU_PER_INCH
+            height = int(extent.attrib.get("cy", "0")) / EMU_PER_INCH
+        except ValueError:
+            continue
+        sizes.append((width, height))
+    return sizes
+
+
+def _looks_like_page_screenshot(width_in: float, height_in: float) -> bool:
+    long_edge = max(width_in, height_in)
+    short_edge = min(width_in, height_in)
+    return long_edge >= PAGE_SCREENSHOT_MIN_HEIGHT_IN and short_edge >= PAGE_SCREENSHOT_MIN_WIDTH_IN
 
 
 def _document_visible_text(document) -> str:

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import base64
+import fitz
 from docx import Document
 from pypdf import PdfWriter
 
@@ -31,6 +32,16 @@ def _write_valid_pdf(path: Path) -> None:
     writer.add_blank_page(width=72, height=72)
     with path.open("wb") as handle:
         writer.write(handle)
+
+
+def _write_marker_pdf(path: Path, pages: list[list[str]]) -> None:
+    document = fitz.open()
+    for lines in pages:
+        page = document.new_page(width=595, height=842)
+        page.insert_text((72, 72), "\n".join(lines), fontsize=12)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
 
 
 def _write_image_only_docx(path: Path) -> None:
@@ -273,6 +284,37 @@ def test_visual_compare_blocks_pdf_word_without_editable_text(tmp_path):
 
     assert result.next_node == "decide"
     assert any("editable_text_missing" in item for item in state.blocking_items)
+
+
+def test_visual_compare_blocks_collapsed_exported_pdf_front_matter(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import visual_compare
+
+    output = tmp_path / "output"
+    work = tmp_path / "work"
+    source = tmp_path / "source.pdf"
+    thesis_pdf = output / "thesis.pdf"
+    _write_valid_pdf(source)
+    _write_marker_pdf(
+        thesis_pdf,
+        [[
+            "Graduation Thesis",
+            "Book Spine",
+            "Declaration",
+            "Chinese Abstract",
+            "Abstract",
+            "1 Introduction",
+        ]],
+    )
+
+    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state.source_kind = "pdf"
+    state.outputs["pdf"] = "pass"
+
+    result = visual_compare(state)
+
+    assert result.next_node == "decide"
+    assert any("pdf_layout_collapsed" in item for item in state.blocking_items)
 
 
 def test_pipeline_report_records_graph_history_and_spine_repair(tmp_path, monkeypatch):

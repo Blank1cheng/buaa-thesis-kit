@@ -64,6 +64,28 @@ def _write_text_pdf_with_captioned_figure(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_full_page_background_image(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_image(fitz.Rect(0, 0, 595, 842), stream=TINY_PNG)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: OCR Layer Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "1 Introduction",
+                "This PDF has editable text over a scanned page background.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_text_pdf_with_table(path: Path) -> None:
     document = fitz.open()
     page = document.new_page(width=595, height=842)
@@ -136,6 +158,17 @@ def test_extract_text_pdf_extracts_captioned_figures_and_skips_decorative_images
     assert figure.source.method == "pdf-embedded-image"
     assert figure.source.page_hint == 1
     assert any("embedded figure" in warning.lower() for warning in model.extraction_warnings)
+
+
+def test_extract_text_pdf_skips_full_page_background_image_when_text_layer_exists(tmp_path):
+    source = tmp_path / "source-with-background.pdf"
+    work = tmp_path / "work"
+    _write_text_pdf_with_full_page_background_image(source)
+
+    model = extract_pdf_model(source, work)
+
+    assert any("editable text over a scanned page background" in section.text for section in model.sections)
+    assert not [figure for figure in model.figures if figure.type == "pdf-figure-image"]
 
 
 def test_extract_text_pdf_promotes_tabular_rows_to_editable_table(tmp_path):

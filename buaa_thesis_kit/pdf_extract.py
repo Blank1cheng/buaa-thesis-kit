@@ -336,9 +336,20 @@ def _skip_pdf_image_block(
         return True
     if caption:
         return False
+    if _is_page_sized_image(bbox, page_rect):
+        return True
     if _is_header_footer_image(bbox, page_rect):
         return True
     return area < LARGE_UNCAPTIONED_IMAGE_AREA
+
+
+def _is_page_sized_image(bbox: tuple[float, float, float, float], page_rect) -> bool:
+    page_width = max(1.0, float(getattr(page_rect, "width", 0.0)))
+    page_height = max(1.0, float(getattr(page_rect, "height", 0.0)))
+    width = max(0.0, bbox[2] - bbox[0])
+    height = max(0.0, bbox[3] - bbox[1])
+    area_ratio = _bbox_area(bbox) / (page_width * page_height)
+    return (width / page_width >= 0.82 and height / page_height >= 0.82) or area_ratio >= 0.72
 
 
 def _is_header_footer_image(bbox: tuple[float, float, float, float], page_rect) -> bool:

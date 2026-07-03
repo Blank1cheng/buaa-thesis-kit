@@ -2,6 +2,7 @@ import base64
 from pathlib import Path
 
 from docx import Document
+from docx.shared import Inches
 
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
@@ -24,6 +25,18 @@ def _write_image_only_docx(path: Path) -> None:
     document.save(path)
 
 
+def _write_editable_docx_with_full_page_screenshot(path: Path) -> None:
+    image = path.with_suffix(".png")
+    image.write_bytes(TINY_PNG)
+    document = Document()
+    document.add_paragraph("PDF Pipeline Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("Editable body text extracted from the source PDF.")
+    document.add_picture(str(image), width=Inches(6.0), height=Inches(8.5))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+
+
 def test_inspect_docx_output_blocks_pdf_word_without_editable_text(tmp_path):
     output = tmp_path / "image-only.docx"
     _write_image_only_docx(output)
@@ -36,6 +49,20 @@ def test_inspect_docx_output_blocks_pdf_word_without_editable_text(tmp_path):
     )
 
     assert any("editable_text_missing" in item for item in result.blocking_items)
+
+
+def test_inspect_docx_output_blocks_pdf_full_page_screenshot_even_with_editable_text(tmp_path):
+    output = tmp_path / "editable-plus-screenshot.docx"
+    _write_editable_docx_with_full_page_screenshot(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="PDF Pipeline Thesis", student_id="20370001"),
+        source_kind="pdf",
+        require_spine=False,
+    )
+
+    assert any("word_page_screenshot" in item for item in result.blocking_items)
 
 
 def test_inspect_docx_output_blocks_docx_word_without_editable_text(tmp_path):

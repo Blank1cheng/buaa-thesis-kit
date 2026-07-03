@@ -8,6 +8,7 @@ from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata
+from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
 from buaa_thesis_kit.template_fill import fill_word_template
 
 
@@ -108,6 +109,15 @@ def visual_compare(state: GraphState) -> NodeResult:
             source_kind=state.source_kind,
             require_spine=True,
         )
+        for item in inspection.blocking_items:
+            _append_once(state.blocking_items, item)
+        for item in inspection.manual_review:
+            _append_once(state.manual_review, item)
+        for item in inspection.notes:
+            _append_once(state.notes, item)
+    thesis_pdf = state.output_root / "thesis.pdf"
+    if thesis_pdf.exists() or state.outputs.get("pdf") in {"pass", "needs_review"}:
+        inspection = inspect_pdf_output(thesis_pdf)
         for item in inspection.blocking_items:
             _append_once(state.blocking_items, item)
         for item in inspection.manual_review:
