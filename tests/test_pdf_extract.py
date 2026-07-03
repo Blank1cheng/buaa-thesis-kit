@@ -230,6 +230,33 @@ def _write_text_pdf_with_matrix_equation(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_cases_equation(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Cases Equation Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "The piecewise response is defined below.",
+                r"f(x) = \begin{cases} x & x > 0 \\ -x & x <= 0 \end{cases} (5.1)",
+                "The equation above is used for response clipping.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_blank_pdf(path: Path) -> None:
     document = fitz.open()
     document.new_page(width=300, height=400)
@@ -426,6 +453,27 @@ def test_extract_text_pdf_converts_matrix_equations_to_editable_omml(tmp_path):
     combined_sections = "\n".join(section.text for section in model.sections)
     assert r"\begin{bmatrix}" not in combined_sections
     assert "The equation above is used for state transition." in combined_sections
+
+
+def test_extract_text_pdf_converts_cases_equations_to_editable_omml(tmp_path):
+    source = tmp_path / "source-with-cases-equation.pdf"
+    work = tmp_path / "work"
+    _write_text_pdf_with_cases_equation(source)
+
+    model = extract_pdf_model(source, work)
+
+    assert len(model.equations) == 1
+    equation = model.equations[0]
+    assert equation.latex == r"f(x) = \begin{cases} x & x > 0 \\ -x & x <= 0 \end{cases}"
+    assert equation.number == "(5.1)"
+    assert equation.requires_review is False
+    assert "<m:d>" in equation.omml
+    assert '<m:begChr m:val="{"/>' in equation.omml
+    assert "<m:m>" in equation.omml
+    assert "<m:mr>" in equation.omml
+    combined_sections = "\n".join(section.text for section in model.sections)
+    assert r"\begin{cases}" not in combined_sections
+    assert "The equation above is used for response clipping." in combined_sections
 
 
 def test_extract_metadata_recovers_vertical_cover_lines():

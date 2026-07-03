@@ -92,6 +92,20 @@ def test_latex_to_omml_converts_pmatrix_environment():
     assert "<m:t>d</m:t>" in omml
 
 
+def test_latex_to_omml_converts_cases_environment():
+    omml = latex_to_omml(r"f(x) = \begin{cases} x & x > 0 \\ -x & x <= 0 \end{cases}")
+
+    assert "<m:oMathPara" in omml
+    assert "<m:d>" in omml
+    assert '<m:begChr m:val="{"/>' in omml
+    assert '<m:endChr m:val=""/>' in omml
+    assert "<m:m>" in omml
+    assert omml.count("<m:mr>") == 2
+    assert "<m:t>f</m:t>" in omml
+    assert "<m:t>x</m:t>" in omml
+    assert "<m:t>0</m:t>" in omml
+
+
 def test_latex_to_omml_rejects_unsupported_latex_macros():
     assert latex_to_omml(r"x = \unknown{x}") == ""
 
@@ -103,3 +117,4 @@ def test_latex_to_omml_rejects_malformed_scripts():
 
 def test_latex_to_omml_rejects_ragged_matrix_rows():
     assert latex_to_omml(r"A = \begin{bmatrix} 1 & 0 \\ 1 \end{bmatrix}") == ""
+    assert latex_to_omml(r"f = \begin{cases} x & x > 0 \\ -x \end{cases}") == ""

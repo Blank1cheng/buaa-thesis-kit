@@ -19,6 +19,7 @@ equations:
     - Greek
     - bmatrix
     - pmatrix
+    - cases
 manual_review:
   - mathtype_ole
   - image_equation

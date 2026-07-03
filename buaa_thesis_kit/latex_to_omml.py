@@ -29,6 +29,7 @@ NARY_MACROS = {
 MATRIX_DELIMITERS = {
     "matrix": ("", ""),
     "bmatrix": ("[", "]"),
+    "cases": ("{", ""),
     "pmatrix": ("(", ")"),
 }
 
