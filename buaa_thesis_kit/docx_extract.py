@@ -160,7 +160,7 @@ def extract_thesis_model(docx_path: Path, work_dir: Path) -> ThesisModel:
 
     text_blocks, model.tables = _read_text_blocks_and_tables(document)
     model.figures, media_warnings = _extract_media(source_copy, work_dir)
-    model.equations = _extract_equations(source_copy)
+    model.equations = _extract_equations(source_copy, work_dir)
 
     if not text_blocks:
         model.extraction_warnings.append("no body content found")
@@ -680,14 +680,14 @@ def _safe_media_basename(original_name: str) -> str:
     return safe_name or "media.bin"
 
 
-def _extract_equations(source_copy: Path) -> list[EquationItem]:
+def _extract_equations(source_copy: Path, work_dir: Path) -> list[EquationItem]:
     equations: list[EquationItem] = []
     try:
         with zipfile.ZipFile(source_copy) as docx_zip:
             if "word/document.xml" in docx_zip.namelist():
                 document_xml = docx_zip.read("word/document.xml")
                 equations.extend(_extract_omml_equations(document_xml))
-                equations.extend(_extract_embedded_equations(docx_zip, document_xml, len(equations)))
+                equations.extend(_extract_embedded_equations(docx_zip, document_xml, work_dir, len(equations)))
     except zipfile.BadZipFile:
         return equations
     return equations
@@ -722,6 +722,7 @@ def _extract_omml_equations(document_xml: bytes) -> list[EquationItem]:
 def _extract_embedded_equations(
     docx_zip: zipfile.ZipFile,
     document_xml: bytes,
+    work_dir: Path,
     existing_count: int,
 ) -> list[EquationItem]:
     try:
@@ -731,6 +732,7 @@ def _extract_embedded_equations(
 
     relationships = _document_relationship_targets(docx_zip)
     equations: list[EquationItem] = []
+    used_preview_names: set[str] = set()
     for ole_object in root.xpath("//*[local-name()='OLEObject']"):
         prog_id = str(ole_object.get("ProgID") or "")
         if not _is_equation_ole_object(prog_id):
@@ -738,16 +740,55 @@ def _extract_embedded_equations(
         relationship_id = ole_object.get(RELATIONSHIP_ID_ATTR) or ""
         target = relationships.get(relationship_id, "")
         display_name = Path(target).name if target else str(ole_object.get("ObjectID") or "embedded-equation")
+        preview_path = _extract_ole_preview_image(
+            docx_zip,
+            ole_object,
+            relationships,
+            work_dir,
+            used_preview_names,
+        )
         equations.append(
             EquationItem(
                 id=f"eq-{existing_count + len(equations) + 1}",
                 kind="embedded-object",
                 text=display_name,
+                preview_path=str(preview_path.resolve()) if preview_path is not None else "",
                 source=_source("docx-embedded-equation", None, 0.78, True),
                 requires_review=True,
             )
         )
     return equations
+
+
+def _extract_ole_preview_image(
+    docx_zip: zipfile.ZipFile,
+    ole_object,
+    relationships: dict[str, str],
+    work_dir: Path,
+    used_names: set[str],
+) -> Path | None:
+    preview_nodes = ole_object.xpath("ancestor::*[local-name()='object'][1]//*[local-name()='imagedata']")
+    if not preview_nodes:
+        return None
+    preview_id = preview_nodes[0].get(RELATIONSHIP_ID_ATTR) or ""
+    target = relationships.get(preview_id)
+    if not target:
+        return None
+    part_name = _word_part_name(target)
+    if part_name not in docx_zip.namelist():
+        return None
+    preview_dir = work_dir / "equation-preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    destination = _unique_media_destination(preview_dir, Path(part_name).name, used_names)
+    destination.write_bytes(docx_zip.read(part_name))
+    return destination
+
+
+def _word_part_name(target: str) -> str:
+    normalized = str(target or "").replace("\\", "/").lstrip("/")
+    if normalized.startswith("word/"):
+        return normalized
+    return f"word/{normalized}"
 
 
 def _document_relationship_targets(docx_zip: zipfile.ZipFile) -> dict[str, str]:

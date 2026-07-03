@@ -296,6 +296,35 @@ def test_equations_placeholder_inserts_omml_word_math(tmp_path):
     assert "[Equation requires review]" not in document_xml
 
 
+def test_equations_placeholder_inserts_supported_embedded_equation_preview(tmp_path):
+    preview = tmp_path / "equation-preview.png"
+    preview.write_bytes(TINY_PNG)
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-preview",
+            kind="embedded-object",
+            text="equation.bin",
+            preview_path=str(preview),
+            requires_review=True,
+        )
+    ]
+    template = tmp_path / "equation-preview-template.docx"
+    output = tmp_path / "out" / "thesis.docx"
+    doc = Document()
+    doc.add_paragraph("{{EQUATIONS}}")
+    doc.save(template)
+
+    fill_word_template(template, model, output)
+
+    result = Document(output)
+    text = _all_text(result)
+    assert "[Equation preview inserted] equation.bin" in text
+    assert "[Equation requires review]" not in text
+    with zipfile.ZipFile(output) as package:
+        assert any(name.startswith("word/media/") for name in package.namelist())
+
+
 def test_inline_scalar_replacement_preserves_unrelated_bold_run(tmp_path):
     template = tmp_path / "runs-template.docx"
     output = tmp_path / "out" / "thesis.docx"

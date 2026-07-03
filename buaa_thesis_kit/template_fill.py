@@ -525,7 +525,7 @@ def _render_figures_as_review_paragraphs(figures: Iterable[AssetItem]) -> list[R
 def _render_equations(equations: Iterable[EquationItem]) -> list[RenderedEquation | RenderedParagraph]:
     rendered: list[RenderedEquation | RenderedParagraph] = []
     for equation in equations:
-        if equation.omml.strip():
+        if equation.omml.strip() or equation.preview_path:
             rendered.append(RenderedEquation(equation))
         else:
             rendered.append(RenderedParagraph(_equation_review_text(equation)))
@@ -543,14 +543,30 @@ def _apply_equation(paragraph: Paragraph, equation: EquationItem) -> None:
             return
         except Exception:
             pass
+    preview_path = Path(equation.preview_path) if equation.preview_path else None
+    if preview_path is not None and _is_supported_existing_image(preview_path):
+        try:
+            paragraph.clear()
+            paragraph.add_run().add_picture(str(preview_path), width=Inches(4.8))
+            label = _insert_paragraph_after(paragraph)
+            _replace_paragraph_text(label, f"[Equation preview inserted] {_equation_caption(equation)}".strip())
+            return
+        except Exception:
+            pass
     _replace_paragraph_text(paragraph, _equation_review_text(equation))
 
 
 def _equation_review_text(equation: EquationItem) -> str:
     content = equation.latex or equation.text or "manual conversion required"
+    if equation.preview_path:
+        content = f"{content} preview={Path(equation.preview_path).name}"
     number = f" {equation.number}" if equation.number else ""
     prefix = "[Equation requires review]" if equation.requires_review else "[Equation]"
     return f"{prefix}{number} {content}".strip()
+
+
+def _equation_caption(equation: EquationItem) -> str:
+    return equation.text or equation.number or equation.id
 
 
 def _render_appendices(appendices: Iterable[ContentBlock]) -> list[RenderedParagraph]:

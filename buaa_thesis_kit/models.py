@@ -79,6 +79,7 @@ class EquationItem:
     number: str = ""
     latex: str = ""
     omml: str = ""
+    preview_path: str = ""
     source: SourceEvidence | None = None
     requires_review: bool = True
 

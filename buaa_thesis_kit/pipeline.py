@@ -152,6 +152,7 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
 
     def export_pdf(state: GraphState) -> NodeResult:
         state.notes.extend(_copy_final_figure_assets(state.model, image_dir))
+        state.notes.extend(_copy_final_equation_assets(state.model, image_dir))
 
         thesis_docx = state.output_root / "thesis.docx"
         if state.authoritative_docx is not None and state.authoritative_docx.exists():
@@ -321,6 +322,44 @@ def _copy_final_figure_assets(model: ThesisModel, image_dir: Path) -> list[str]:
             notes.append(f"Figure {figure.id} could not be copied to output/image: {exc}")
             continue
         figure.path = str(destination.resolve(strict=False))
+
+    return notes
+
+
+def _copy_final_equation_assets(model: ThesisModel, image_dir: Path) -> list[str]:
+    notes: list[str] = []
+    used_names = {path.name for path in image_dir.iterdir()} if image_dir.exists() else set()
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    for equation in model.equations:
+        if not equation.preview_path:
+            continue
+
+        source = Path(equation.preview_path)
+        if not source.exists() or not source.is_file():
+            equation.requires_review = True
+            notes.append(f"Equation {equation.id} preview image missing: {_safe_display_path(source)}")
+            continue
+
+        if _is_relative_to(source, image_dir):
+            equation.preview_path = str(source.resolve(strict=False))
+            used_names.add(source.name)
+            continue
+
+        safe_name = _safe_asset_name(source.name)
+        if _is_process_filename(safe_name):
+            equation.requires_review = True
+            notes.append(f"Equation {equation.id} skipped process-like preview asset name: {safe_name}")
+            continue
+
+        destination = _unique_destination(image_dir, safe_name, used_names)
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            equation.requires_review = True
+            notes.append(f"Equation {equation.id} preview could not be copied to output/image: {exc}")
+            continue
+        equation.preview_path = str(destination.resolve(strict=False))
 
     return notes
 

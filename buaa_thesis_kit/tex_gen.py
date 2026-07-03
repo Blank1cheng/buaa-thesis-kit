@@ -480,6 +480,10 @@ def _equation_review_comment(equation: EquationItem) -> str:
         comments.append(f"% REVIEW: equation text: {_comment_value(equation.text)}")
     if equation.number:
         comments.append(f"% REVIEW: equation number: {_comment_value(equation.number)}")
+    if equation.preview_path:
+        comments.append(
+            f"% REVIEW: equation preview: {_comment_value(_sanitized_path(equation.preview_path, None))}"
+        )
     return "\n".join(comments)
 
 

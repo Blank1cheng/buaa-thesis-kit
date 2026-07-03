@@ -63,6 +63,10 @@ def _patch_docx_with_ole_objects(docx_path: Path) -> None:
     patched_path = docx_path.with_suffix(".ole.docx")
     equation_object = (
         '<w:p><w:r><w:object>'
+        '<v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:imagedata xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'r:id="rIdEquationImage"/>'
+        "</v:shape>"
         '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office:office" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
         'Type="Embed" ProgID="Equation.DSMT4" r:id="rIdEquation"/>'
@@ -79,12 +83,16 @@ def _patch_docx_with_ole_objects(docx_path: Path) -> None:
         '<Relationship Id="rIdEquation" '
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
         'Target="embeddings/equation.bin"/>'
+        '<Relationship Id="rIdEquationImage" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        'Target="media/equation-preview.png"/>'
         '<Relationship Id="rIdVisio" '
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
         'Target="embeddings/visio.vsdx"/>'
     ).encode("utf-8")
     content_types = (
         '<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>'
+        '<Default Extension="png" ContentType="image/png"/>'
         '<Default Extension="vsdx" ContentType="application/vnd.ms-visio.drawing.main+xml"/>'
     ).encode("utf-8")
     with zipfile.ZipFile(docx_path, "r") as source, zipfile.ZipFile(patched_path, "w") as target:
@@ -99,6 +107,7 @@ def _patch_docx_with_ole_objects(docx_path: Path) -> None:
             target.writestr(info, data)
         target.writestr("word/embeddings/equation.bin", b"equation ole payload")
         target.writestr("word/embeddings/visio.vsdx", b"visio payload")
+        target.writestr("word/media/equation-preview.png", TINY_PNG)
     patched_path.replace(docx_path)
 
 
@@ -345,6 +354,7 @@ def test_detects_omml_and_embedded_equations(tmp_path):
     assert by_kind["omml"].omml.startswith("<m:oMathPara")
     assert "<m:t>x+y</m:t>" in by_kind["omml"].omml
     assert by_kind["embedded-object"].requires_review is True
+    assert Path(by_kind["embedded-object"].preview_path).read_bytes() == TINY_PNG
     assert "OMML equations require TeX review" in model.extraction_warnings
     assert model.status == "needs_review"
 
@@ -374,6 +384,7 @@ def test_embedded_visio_objects_are_not_counted_as_equations(tmp_path):
     assert [(equation.kind, equation.text) for equation in model.equations] == [
         ("embedded-object", "equation.bin")
     ]
+    assert Path(model.equations[0].preview_path).read_bytes() == TINY_PNG
 
 
 def test_duplicate_media_basenames_are_extracted_to_unique_paths(tmp_path):

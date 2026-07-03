@@ -318,6 +318,29 @@ def test_posix_absolute_missing_image_path_is_sanitized_on_windows(tmp_path):
     assert "% REVIEW: figure path: missing-secret.png" in tex
 
 
+def test_equation_review_comment_includes_sanitized_preview_path(tmp_path):
+    preview = tmp_path / "assets" / "formula-preview.wmf"
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    preview.write_bytes(b"wmf preview")
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-preview",
+            kind="embedded-object",
+            text="equation.bin",
+            preview_path=str(preview),
+            requires_review=True,
+        )
+    ]
+    output = tmp_path / "out" / "thesis.tex"
+
+    generate_tex(model, output, image_root=tmp_path / "assets")
+
+    tex = output.read_text(encoding="utf-8")
+    assert "% REVIEW: equation preview: formula-preview.wmf" in tex
+    assert str(preview) not in tex
+
+
 def test_creates_only_requested_tex_file_in_output_directory(tmp_path):
     output_dir = tmp_path / "empty-output"
     output = output_dir / "thesis.tex"

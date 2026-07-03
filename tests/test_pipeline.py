@@ -8,6 +8,7 @@ import fitz
 from docx import Document
 from pypdf import PdfWriter
 
+from buaa_thesis_kit.models import EquationItem, ThesisModel
 from buaa_thesis_kit.validate import validate_clean_output
 
 
@@ -251,6 +252,33 @@ def test_run_pipeline_doc_conversion_failure_writes_failed_report(tmp_path, monk
     assert "report.md" in _public_names(output)
     assert any("doc conversion" in item.lower() for item in report["blocking_items"])
     assert "Word DOC conversion unavailable" in (output / "report.md").read_text(encoding="utf-8")
+
+
+def test_copy_final_equation_assets_moves_preview_images_to_public_image_dir(tmp_path):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    preview = tmp_path / "work" / "equation-preview" / "formula.png"
+    preview.parent.mkdir(parents=True)
+    preview.write_bytes(TINY_PNG)
+    image_dir = tmp_path / "output" / "image"
+    model = ThesisModel(
+        equations=[
+            EquationItem(
+                id="eq-preview",
+                kind="embedded-object",
+                text="equation.bin",
+                preview_path=str(preview),
+                requires_review=True,
+            )
+        ]
+    )
+
+    notes = pipeline._copy_final_equation_assets(model, image_dir)
+
+    copied = image_dir / "formula.png"
+    assert copied.read_bytes() == TINY_PNG
+    assert model.equations[0].preview_path == str(copied.resolve(strict=False))
+    assert notes == []
 
 
 def test_run_pipeline_invalid_pdf_input_writes_failed_report_without_exception(tmp_path):
