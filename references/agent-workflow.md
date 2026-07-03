@@ -32,7 +32,7 @@ Every exported PDF must pass `PDF cover geometry` validation before final submis
 
 ## 8. OCR Ledger
 
-For scanned PDF pages or pages with no extractable text, the pipeline must render a page evidence image such as `pdf-page-001.png`, copy it to `output/image/`, and write an `OCR Ledger` entry in `output/report.md`. Each entry should carry the page number, `needs_ocr` status, evidence image, extracted character count, confidence, and review flag. The evidence image must not be inserted as a full-page Word screenshot.
+For scanned PDF pages or pages with no extractable text, the pipeline must render a page evidence image such as `pdf-page-001.png`, copy it to `output/image/`, and write an `OCR Ledger` entry in `output/report.md`. Each entry should carry the page number, `needs_ocr` or `ocr_text_extracted` status, evidence image, extracted character count, confidence, and review flag. When OCR text is extracted, agents may render that text into editable Word/TeX body content while keeping the page image only as evidence. The evidence image must not be inserted as a full-page Word screenshot.
 
 ## 9. Equation Ledger
 

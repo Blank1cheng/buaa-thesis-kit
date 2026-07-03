@@ -2,6 +2,8 @@ python-docx
 lxml
 pypdf
 PyMuPDF
+pytesseract
+Pillow
 pytest
 jsonschema
 pyyaml

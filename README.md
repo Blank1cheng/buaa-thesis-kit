@@ -86,6 +86,10 @@ PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只�
 `output/report.md` 中的 `OCR Ledger` 记录扫描页和无可提取文本页。每条 ledger 至少包含页码、
 `needs_ocr` 状态、证据图片、可提取字符数、置信度和是否需要复核。证据图片会复制到
 `output/image/`，例如 `pdf-page-001.png`，但不会作为整页截图插入最终 Word 正文。
+当本机 OCR 引擎返回文本时，ledger 状态为 `ocr_text_extracted`，识别文本会进入可编辑
+Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
+默认 OCR hook 使用 `pytesseract`/`Pillow` 和本机 Tesseract 可执行程序；缺少语言包或
+可执行程序时不会阻断流水线，而是继续输出 `needs_ocr`。
 
 ## 公式证据账本
 

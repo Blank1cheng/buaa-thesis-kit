@@ -3,7 +3,13 @@ from pathlib import Path
 
 import fitz
 
-from buaa_thesis_kit.pdf_extract import PdfLine, _extract_content, _extract_metadata, extract_pdf_model
+from buaa_thesis_kit.pdf_extract import (
+    OcrResult,
+    PdfLine,
+    _extract_content,
+    _extract_metadata,
+    extract_pdf_model,
+)
 
 
 TINY_PNG = base64.b64decode(
@@ -385,3 +391,31 @@ def test_extract_blank_pdf_renders_page_image_and_marks_ocr_review(tmp_path):
     assert model.ocr_ledger[0].confidence == 0.0
     assert model.ocr_ledger[0].requires_review is True
     assert any("ocr" in warning.lower() for warning in model.extraction_warnings)
+
+
+def test_extract_scanned_pdf_uses_ocr_text_as_editable_sections(tmp_path):
+    source = tmp_path / "scanned.pdf"
+    work = tmp_path / "work"
+    _write_blank_pdf(source)
+
+    def fake_ocr(image_path: Path) -> OcrResult:
+        assert image_path.name == "pdf-page-001.png"
+        return OcrResult(
+            text="1 Introduction\nOCR recovered editable body text.",
+            confidence=0.86,
+            engine="fake-ocr",
+        )
+
+    model = extract_pdf_model(source, work, ocr_engine=fake_ocr)
+
+    assert model.status == "needs_review"
+    assert len(model.figures) == 1
+    assert Path(model.figures[0].path).is_file()
+    assert len(model.ocr_ledger) == 1
+    assert model.ocr_ledger[0].status == "ocr_text_extracted"
+    assert model.ocr_ledger[0].text_characters == len("1 Introduction\nOCR recovered editable body text.")
+    assert model.ocr_ledger[0].confidence == 0.86
+    assert model.ocr_ledger[0].requires_review is True
+    assert model.ocr_ledger[0].source is not None
+    assert model.ocr_ledger[0].source.method == "fake-ocr"
+    assert any("OCR recovered editable body text." in section.text for section in model.sections)

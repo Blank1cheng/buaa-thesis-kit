@@ -141,8 +141,10 @@ def test_agent_workflow_documents_ocr_ledger():
 
     assert "OCR Ledger" in readme
     assert "needs_ocr" in readme
+    assert "ocr_text_extracted" in readme
     assert "OCR Ledger" in workflow
     assert "needs_ocr" in workflow
+    assert "ocr_text_extracted" in workflow
     assert "pdf-page-001.png" in workflow
 
 

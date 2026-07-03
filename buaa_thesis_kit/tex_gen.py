@@ -259,6 +259,8 @@ def _render_figures(
 ) -> list[str]:
     blocks: list[str] = []
     for figure in figures:
+        if _is_resolved_ocr_evidence_figure(figure):
+            continue
         if _is_ocr_evidence_figure(figure):
             blocks.append(_ocr_evidence_review_comment(figure, image_root))
             continue
@@ -424,6 +426,10 @@ def _is_supported_existing_image(path: Path) -> bool:
 
 def _is_ocr_evidence_figure(figure: AssetItem) -> bool:
     return str(figure.type or "").strip().lower() in OCR_EVIDENCE_FIGURE_TYPES
+
+
+def _is_resolved_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return _is_ocr_evidence_figure(figure) and not figure.requires_review
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

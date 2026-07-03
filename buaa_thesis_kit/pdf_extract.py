@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from buaa_thesis_kit.models import (
     AssetItem,
@@ -24,6 +26,16 @@ class PdfLine:
     index: int
     page: int
     text: str
+
+
+@dataclass(frozen=True)
+class OcrResult:
+    text: str
+    confidence: float = 0.0
+    engine: str = "ocr"
+
+
+OcrEngine = Callable[[Path], OcrResult | str | dict[str, Any] | None]
 
 
 @dataclass(frozen=True)
@@ -96,7 +108,11 @@ BUAA_SPINE_MARKER = "论文封面书脊"
 BUAA_TASK_BOOK_TITLE = "本科生毕业设计（论文）任务书"
 
 
-def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
+def extract_pdf_model(
+    pdf_path: Path,
+    work_dir: Path,
+    ocr_engine: OcrEngine | None = None,
+) -> ThesisModel:
     """Extract a reviewable ThesisModel from a PDF source."""
     source = Path(pdf_path)
     work = Path(work_dir)
@@ -150,10 +166,22 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
             else:
                 figure = _render_page_image(page, work, page_index + 1)
                 model.figures.append(figure)
-                model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1))
-                model.extraction_warnings.append(
-                    f"OCR required: PDF page {page_index + 1} has no extractable text; page image rendered for review."
-                )
+                ocr_result = _run_ocr_engine(Path(figure.path), ocr_engine)
+                if ocr_result is not None and _clean_text(ocr_result.text):
+                    figure.requires_review = False
+                    figure.caption = f"PDF page {page_index + 1} OCR evidence image; OCR text extracted"
+                    for text in _ocr_text_lines(ocr_result.text):
+                        lines.append(PdfLine(index=line_index, page=page_index + 1, text=text))
+                        line_index += 1
+                    model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1, ocr_result))
+                    model.extraction_warnings.append(
+                        f"OCR text extracted: PDF page {page_index + 1} requires review against page image."
+                    )
+                else:
+                    model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1))
+                    model.extraction_warnings.append(
+                        f"OCR required: PDF page {page_index + 1} has no extractable text; page image rendered for review."
+                    )
 
         if lines:
             model.metadata = _extract_metadata(lines)
@@ -217,7 +245,96 @@ def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:
     )
 
 
-def _ocr_ledger_item(figure: AssetItem, page_number: int) -> OcrLedgerItem:
+def _run_ocr_engine(image_path: Path, ocr_engine: OcrEngine | None) -> OcrResult | None:
+    engine = ocr_engine or _default_ocr_engine
+    try:
+        raw_result = engine(Path(image_path))
+    except Exception:
+        return None
+    return _coerce_ocr_result(raw_result)
+
+
+def _default_ocr_engine(image_path: Path) -> OcrResult | None:
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        return None
+
+    languages = [os.environ.get("BUAA_THESIS_OCR_LANG", "chi_sim+eng"), "eng"]
+    for language in dict.fromkeys(languages):
+        try:
+            with Image.open(image_path) as image:
+                text = pytesseract.image_to_string(image, lang=language)
+                confidence = _tesseract_confidence(pytesseract, image, language)
+        except Exception:
+            continue
+        if _clean_text(text):
+            return OcrResult(text=text, confidence=confidence, engine=f"tesseract:{language}")
+    return None
+
+
+def _tesseract_confidence(pytesseract, image, language: str) -> float:
+    try:
+        data = pytesseract.image_to_data(image, lang=language, output_type=pytesseract.Output.DICT)
+    except Exception:
+        return 0.0
+    confidences: list[float] = []
+    for value in data.get("conf", []):
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            continue
+        if confidence >= 0:
+            confidences.append(confidence)
+    if not confidences:
+        return 0.0
+    return round(sum(confidences) / len(confidences) / 100.0, 4)
+
+
+def _coerce_ocr_result(raw_result: OcrResult | str | dict[str, Any] | None) -> OcrResult | None:
+    if raw_result is None:
+        return None
+    if isinstance(raw_result, OcrResult):
+        return raw_result
+    if isinstance(raw_result, str):
+        return OcrResult(text=raw_result, confidence=0.0, engine="ocr")
+    if isinstance(raw_result, dict):
+        text = str(raw_result.get("text", ""))
+        try:
+            confidence = float(raw_result.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        engine = str(raw_result.get("engine", "ocr"))
+        return OcrResult(text=text, confidence=confidence, engine=engine)
+    return None
+
+
+def _ocr_text_lines(text: str) -> list[str]:
+    return [_clean_text(line) for line in str(text or "").splitlines() if _clean_text(line)]
+
+
+def _ocr_ledger_item(
+    figure: AssetItem,
+    page_number: int,
+    ocr_result: OcrResult | None = None,
+) -> OcrLedgerItem:
+    if ocr_result is not None and _clean_text(ocr_result.text):
+        return OcrLedgerItem(
+            page=page_number,
+            status="ocr_text_extracted",
+            image_path=figure.path,
+            text_characters=len(ocr_result.text),
+            confidence=ocr_result.confidence,
+            requires_review=True,
+            source=SourceEvidence(
+                file=SOURCE_PDF_NAME,
+                method=ocr_result.engine,
+                page_hint=page_number,
+                confidence=ocr_result.confidence,
+                requires_review=True,
+            ),
+        )
     return OcrLedgerItem(
         page=page_number,
         status="needs_ocr",
@@ -983,4 +1100,4 @@ def _clean_text(text: str) -> str:
     return re.sub(r"[^\S\t]+", " ", str(text).replace("\u3000", " ")).strip()
 
 
-__all__ = ["extract_pdf_model"]
+__all__ = ["OcrResult", "extract_pdf_model"]

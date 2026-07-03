@@ -345,6 +345,43 @@ def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_scre
     assert "pdf-page-001.png" in report_text
 
 
+def test_run_pipeline_scanned_pdf_with_ocr_writes_editable_word_text(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+    from buaa_thesis_kit.pdf_extract import OcrResult, extract_pdf_model as real_extract_pdf_model
+
+    source = tmp_path / "scanned-with-ocr.pdf"
+    output = tmp_path / "output"
+    _write_blank_pdf(source)
+
+    def fake_extract_pdf_model(path: Path, work_dir: Path):
+        return real_extract_pdf_model(
+            path,
+            work_dir,
+            ocr_engine=lambda _image_path: OcrResult(
+                text="1 Introduction\nOCR recovered editable body text.",
+                confidence=0.86,
+                engine="fake-ocr",
+            ),
+        )
+
+    monkeypatch.setattr(pipeline, "extract_pdf_model", fake_extract_pdf_model)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "needs_review"
+    assert report["ocr_ledger"][0]["status"] == "ocr_text_extracted"
+    assert report["ocr_ledger"][0]["text_characters"] == len(
+        "1 Introduction\nOCR recovered editable body text."
+    )
+    assert (output / "image" / "pdf-page-001.png").is_file()
+    with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
+        document_xml = docx_zip.read("word/document.xml").decode("utf-8")
+    assert "OCR recovered editable body text." in document_xml
+    assert "OCR/manual transcription required" not in document_xml
+    assert "OCR recovered editable body text." in (output / "thesis.tex").read_text(encoding="utf-8")
+
+
 def test_run_pipeline_doc_input_converts_to_docx_before_extraction(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 

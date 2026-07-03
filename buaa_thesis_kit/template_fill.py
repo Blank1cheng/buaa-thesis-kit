@@ -320,6 +320,8 @@ def _insert_table_after_anchor(paragraph: Paragraph, anchor, table_block: Conten
 
 
 def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem):
+    if _is_resolved_ocr_evidence_figure(figure):
+        return anchor
     image_path = Path(figure.path) if figure.path else None
     caption = _figure_caption(figure)
     if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
@@ -474,6 +476,8 @@ def _add_tables(document, tables: Iterable[ContentBlock]) -> None:
 
 def _add_figures(document, figures: Iterable[AssetItem]) -> None:
     for figure in figures:
+        if _is_resolved_ocr_evidence_figure(figure):
+            continue
         image_path = Path(figure.path) if figure.path else None
         caption = _figure_caption(figure)
         if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
@@ -865,6 +869,10 @@ def _is_supported_existing_image(path: Path) -> bool:
 
 def _is_ocr_evidence_figure(figure: AssetItem) -> bool:
     return str(figure.type or "").strip().lower() in OCR_EVIDENCE_FIGURE_TYPES
+
+
+def _is_resolved_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return _is_ocr_evidence_figure(figure) and not figure.requires_review
 
 
 def _heading_style(level: int) -> str:
