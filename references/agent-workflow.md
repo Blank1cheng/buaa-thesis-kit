@@ -26,10 +26,14 @@ Every run must preserve `output/thesis.docx` as the authoritative editable Word 
 
 Use `--strict` for final submission checks. In strict finalization mode, any manual-review item or `needs_review` output must produce `strict_finalization_failed`, and the CLI must exit non-zero. Non-strict mode may still emit `needs_review` so reviewers can inspect editable Word, PDF, TeX, and image outputs.
 
-## 7. OCR Ledger
+## 7. PDF cover geometry
+
+Every exported PDF must pass `PDF cover geometry` validation before final submission. Agents should inspect `cover_title_y`, `thesis_title_y`, `field_rows_y`, and `date_y` in `output/report.md`; these values must stay within the reference-template bands for the cover title, thesis title, cover metadata rows, and date. A `pdf_cover_geometry` blocking item means the cover layout has drifted and the Word template spacing must be repaired before acceptance.
+
+## 8. OCR Ledger
 
 For scanned PDF pages or pages with no extractable text, the pipeline must render a page evidence image such as `pdf-page-001.png`, copy it to `output/image/`, and write an `OCR Ledger` entry in `output/report.md`. Each entry should carry the page number, `needs_ocr` status, evidence image, extracted character count, confidence, and review flag. The evidence image must not be inserted as a full-page Word screenshot.
 
-## 8. Equation Ledger
+## 9. Equation Ledger
 
 Every run must write an `Equation Ledger` entry for each detected equation. `editable_omml` and `editable_ole_object` may remain in the final Word because they are editable Word/OLE objects. `trusted_latex` may be regenerated as editable math only when the extractor marks it trusted. `preview_image_needs_review` and `manual_transcription_required` are not compliant final states; agents must convert them to editable Word equations or keep the run in `needs_review`. Preview images may be copied to `output/image/` as evidence, but they must not be treated as editable equations.

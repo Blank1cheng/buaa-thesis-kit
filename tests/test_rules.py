@@ -156,3 +156,15 @@ def test_agent_workflow_documents_equation_ledger():
         assert "editable_omml" in text
         assert "editable_ole_object" in text
         assert "preview_image_needs_review" in text
+
+
+def test_agent_workflow_documents_cover_geometry_audit():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "PDF cover geometry" in text
+        assert "cover_title_y" in text
+        assert "field_rows_y" in text
+        assert "date_y" in text

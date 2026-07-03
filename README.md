@@ -74,6 +74,13 @@ PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只�
 不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count` 和
 `drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。
 
+## 封面几何验收
+
+`output/report.md` 中的 `PDF cover geometry` 记录封面元素坐标证据，至少包含
+`cover_title_y`、`thesis_title_y`、`field_rows_y` 和 `date_y`。这些值用于检查封面标题、
+论文题目、学院/专业/姓名/导师字段行和日期是否落在参考模板区间内；若出现
+`pdf_cover_geometry` 阻断项，说明封面元素位置已经偏离模板，不得作为最终合格 PDF。
+
 ## OCR 证据账本
 
 `output/report.md` 中的 `OCR Ledger` 记录扫描页和无可提取文本页。每条 ledger 至少包含页码、
