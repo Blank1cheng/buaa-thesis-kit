@@ -6,6 +6,26 @@ from xml.sax.saxutils import escape
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_{}\\\s+\-*/=().,<>^]+$")
+GREEK_MACROS = {
+    "alpha": 0x03B1,
+    "beta": 0x03B2,
+    "gamma": 0x03B3,
+    "delta": 0x03B4,
+    "epsilon": 0x03B5,
+    "theta": 0x03B8,
+    "lambda": 0x03BB,
+    "mu": 0x03BC,
+    "pi": 0x03C0,
+    "rho": 0x03C1,
+    "sigma": 0x03C3,
+    "tau": 0x03C4,
+    "phi": 0x03C6,
+    "omega": 0x03C9,
+}
+NARY_MACROS = {
+    "sum": 0x2211,
+    "int": 0x222B,
+}
 
 
 def latex_to_omml(latex: str) -> str:
@@ -82,6 +102,14 @@ class _LinearMathParser:
             if not radicand:
                 return ""
             return _radical(radicand)
+        if name in GREEK_MACROS:
+            return self._apply_scripts(_run(chr(GREEK_MACROS[name])))
+        if name in NARY_MACROS:
+            scripts = self._consume_scripts()
+            if scripts is None:
+                return ""
+            subscript, superscript = scripts
+            return _nary(chr(NARY_MACROS[name]), subscript, superscript)
         return ""
 
     def _parse_required_group(self) -> str:
@@ -98,30 +126,39 @@ class _LinearMathParser:
         base = self._consume_identifier()
         if not base:
             return ""
+        return self._apply_scripts(_run(base))
+
+    def _apply_scripts(self, base_run: str) -> str:
+        scripts = self._consume_scripts()
+        if scripts is None:
+            return ""
+        subscript, superscript = scripts
+        if subscript and superscript:
+            return _subscript_superscript(base_run, subscript, superscript)
+        if subscript:
+            return _subscript(base_run, subscript)
+        if superscript:
+            return _superscript(base_run, superscript)
+        return base_run
+
+    def _consume_scripts(self) -> tuple[str, str] | None:
         subscript = ""
         superscript = ""
         while self._peek() in {"_", "^"}:
             marker = self._peek()
             self.index += 1
-            value = self._consume_script_value()
+            value = self._consume_script_omml()
             if not value:
-                return ""
+                return None
             if marker == "_":
                 if subscript:
-                    return ""
+                    return None
                 subscript = value
             else:
                 if superscript:
-                    return ""
+                    return None
                 superscript = value
-        base_run = _run(base)
-        if subscript and superscript:
-            return _subscript_superscript(base_run, _run(subscript), _run(superscript))
-        if subscript:
-            return _subscript(base_run, _run(subscript))
-        if superscript:
-            return _superscript(base_run, _run(superscript))
-        return base_run
+        return subscript, superscript
 
     def _consume_identifier(self) -> str:
         start = self.index
@@ -138,7 +175,7 @@ class _LinearMathParser:
             self.index += 1
         return self.source[start : self.index]
 
-    def _consume_script_value(self) -> str:
+    def _consume_script_omml(self) -> str:
         if self._peek() == "{":
             end = _find_simple_group_end(self.source, self.index)
             if end < 0:
@@ -154,7 +191,7 @@ class _LinearMathParser:
             value = self.source[start : self.index].strip()
         if not value or "{" in value or "}" in value or "_" in value or "^" in value:
             return ""
-        return value
+        return _run(value)
 
     def _peek(self) -> str:
         if self.index >= len(self.source):
@@ -176,6 +213,14 @@ def _fraction(numerator: str, denominator: str) -> str:
 
 def _radical(radicand: str) -> str:
     return f"<m:rad><m:deg/><m:e>{radicand}</m:e></m:rad>"
+
+
+def _nary(symbol: str, subscript: str, superscript: str) -> str:
+    return (
+        f'<m:nary><m:naryPr><m:chr m:val="{escape(symbol)}"/>'
+        '<m:limLoc m:val="undOvr"/></m:naryPr>'
+        f"<m:sub>{subscript}</m:sub><m:sup>{superscript}</m:sup><m:e/></m:nary>"
+    )
 
 
 def _superscript(base: str, superscript: str) -> str:

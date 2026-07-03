@@ -176,6 +176,33 @@ def _write_text_pdf_with_fraction_equation(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_sum_equation(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Sum Equation Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "The accumulated loss is defined below.",
+                r"L = \sum_{i=1}^{n} \alpha_i (3.1)",
+                "The equation above is used for loss aggregation.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_blank_pdf(path: Path) -> None:
     document = fitz.open()
     document.new_page(width=300, height=400)
@@ -331,6 +358,27 @@ def test_extract_text_pdf_converts_fraction_equations_to_editable_omml(tmp_path)
     combined_sections = "\n".join(section.text for section in model.sections)
     assert r"\frac{x_k}{\sqrt{n}}" not in combined_sections
     assert "The equation above is used for normalization." in combined_sections
+
+
+def test_extract_text_pdf_converts_sum_and_greek_equations_to_editable_omml(tmp_path):
+    source = tmp_path / "source-with-sum-equation.pdf"
+    work = tmp_path / "work"
+    _write_text_pdf_with_sum_equation(source)
+
+    model = extract_pdf_model(source, work)
+
+    assert len(model.equations) == 1
+    equation = model.equations[0]
+    assert equation.latex == r"L = \sum_{i=1}^{n} \alpha_i"
+    assert equation.number == "(3.1)"
+    assert equation.requires_review is False
+    assert "<m:nary>" in equation.omml
+    assert f'<m:chr m:val="{chr(0x2211)}"/>' in equation.omml
+    assert f"<m:t>{chr(0x03B1)}</m:t>" in equation.omml
+    assert "<m:sSub>" in equation.omml
+    combined_sections = "\n".join(section.text for section in model.sections)
+    assert r"\sum_{i=1}^{n}" not in combined_sections
+    assert "The equation above is used for loss aggregation." in combined_sections
 
 
 def test_extract_metadata_recovers_vertical_cover_lines():
