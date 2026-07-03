@@ -102,7 +102,8 @@ def _document_has_spine(document) -> bool:
 
 
 def _text_has_spine_marker(text: str) -> bool:
-    return any(marker in str(text) for marker in SPINE_MARKERS)
+    normalized = str(text or "").strip()
+    return "Book Spine" in normalized or normalized == "\u4e66\u810a"
 
 
 def _missing_spine_fields(metadata: Metadata) -> list[str]:
