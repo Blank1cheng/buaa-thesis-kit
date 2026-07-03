@@ -405,6 +405,42 @@ def test_build_report_and_markdown_include_ocr_ledger(tmp_path):
     assert "pdf-page-001.png" in text
 
 
+def test_build_report_and_markdown_include_equation_ledger(tmp_path):
+    equation_ledger = [
+        {
+            "id": "eq-1",
+            "kind": "embedded-object",
+            "status": "editable_ole_object",
+            "number": "(1)",
+            "text": "equation.bin",
+            "preview_path": "D:/work/output/image/formula.png",
+            "editable_in_word": True,
+            "requires_review": True,
+        }
+    ]
+
+    report = build_report(
+        source="source.docx",
+        outputs={"word": "pass", "pdf": "pass", "tex": "needs_review", "image": "pass"},
+        summary={"equations": 1},
+        blocking_items=[],
+        manual_review=["Equation eq-1 requires review: embedded-object"],
+        notes=[],
+        equation_ledger=equation_ledger,
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    assert report["equation_ledger"] == equation_ledger
+    text = path.read_text(encoding="utf-8")
+    assert "## Equation Ledger" in text
+    assert "id=eq-1" in text
+    assert "status=editable_ole_object" in text
+    assert "formula.png" in text
+    assert "editable_in_word=True" in text
+
+
 def test_export_pdf_from_docx_returns_false_for_missing_source_without_junk(tmp_path):
     source = tmp_path / "missing.docx"
     pdf_path = tmp_path / "output" / "thesis.pdf"

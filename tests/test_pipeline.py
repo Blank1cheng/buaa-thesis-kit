@@ -233,7 +233,10 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     assert "PDF Pipeline Thesis" in (output / "thesis.tex").read_text(encoding="utf-8")
     assert report["metadata"]["student_id"]["value"] == "20370001"
     assert report["metadata"]["student_id"]["evidence"]["method"] == "pdf-text-label"
-    assert "student_id: 20370001" in (output / "report.md").read_text(encoding="utf-8")
+    assert report["equation_ledger"] == []
+    report_text = (output / "report.md").read_text(encoding="utf-8")
+    assert "student_id: 20370001" in report_text
+    assert "## Equation Ledger" in report_text
 
 
 def test_run_pipeline_strict_mode_fails_when_review_items_remain(tmp_path, monkeypatch):
@@ -405,6 +408,66 @@ def test_copy_final_equation_assets_moves_preview_images_to_public_image_dir(tmp
     assert copied.read_bytes() == TINY_PNG
     assert model.equations[0].preview_path == str(copied.resolve(strict=False))
     assert notes == []
+
+
+def test_equation_report_classifies_editable_and_review_equations(tmp_path):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    preview = tmp_path / "work" / "formula.png"
+    preview.parent.mkdir(parents=True)
+    preview.write_bytes(TINY_PNG)
+    object_path = tmp_path / "work" / "equation.bin"
+    object_path.write_bytes(b"equation ole payload")
+    image_dir = tmp_path / "output" / "image"
+    model = ThesisModel(
+        equations=[
+            EquationItem(
+                id="eq-omml",
+                kind="omml",
+                text="x+y",
+                number="(1)",
+                omml="<m:oMath/>",
+                requires_review=True,
+            ),
+            EquationItem(
+                id="eq-object",
+                kind="embedded-object",
+                text="equation.bin",
+                number="(2)",
+                preview_path=str(preview),
+                object_path=str(object_path),
+                object_xml="<w:object/>",
+                requires_review=True,
+            ),
+            EquationItem(
+                id="eq-preview",
+                kind="embedded-object",
+                text="preview only",
+                preview_path=str(preview),
+                requires_review=True,
+            ),
+            EquationItem(
+                id="eq-manual",
+                kind="unknown",
+                text="manual",
+                requires_review=True,
+            ),
+        ]
+    )
+
+    pipeline._copy_final_equation_assets(model, image_dir)
+    report = pipeline._equation_report(model)
+
+    by_id = {item["id"]: item for item in report}
+    assert by_id["eq-omml"]["status"] == "editable_omml"
+    assert by_id["eq-omml"]["editable_in_word"] is True
+    assert by_id["eq-object"]["status"] == "editable_ole_object"
+    assert by_id["eq-object"]["editable_in_word"] is True
+    assert by_id["eq-object"]["preview_path"] == str((image_dir / "formula.png").resolve(strict=False))
+    assert by_id["eq-preview"]["status"] == "preview_image_needs_review"
+    assert by_id["eq-preview"]["editable_in_word"] is False
+    assert by_id["eq-manual"]["status"] == "manual_transcription_required"
+    assert by_id["eq-manual"]["editable_in_word"] is False
 
 
 def test_run_pipeline_invalid_pdf_input_writes_failed_report_without_exception(tmp_path):

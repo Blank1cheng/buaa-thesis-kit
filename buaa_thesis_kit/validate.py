@@ -91,6 +91,7 @@ def build_report(
     metadata: dict[str, Any] | None = None,
     editability: dict[str, Any] | None = None,
     ocr_ledger: list[dict[str, Any]] | None = None,
+    equation_ledger: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     output_statuses = [_normalize_status(status) for status in outputs.values()]
     missing_required = _missing_required_report_outputs(outputs)
@@ -118,6 +119,8 @@ def build_report(
         report["editability"] = editability
     if ocr_ledger is not None:
         report["ocr_ledger"] = ocr_ledger
+    if equation_ledger is not None:
+        report["equation_ledger"] = equation_ledger
     return report
 
 
@@ -149,6 +152,10 @@ def write_report_md(report: dict[str, Any], path: Path) -> None:
         "## OCR Ledger",
         "",
         *_format_ocr_ledger(report.get("ocr_ledger", [])),
+        "",
+        "## Equation Ledger",
+        "",
+        *_format_equation_ledger(report.get("equation_ledger", [])),
         "",
         "## Metadata",
         "",
@@ -265,6 +272,29 @@ def _format_ocr_ledger(items: Any) -> list[str]:
             f"image={image_name}",
             f"text_characters={item.get('text_characters', 0)}",
             f"confidence={item.get('confidence', 0.0)}",
+            f"requires_review={item.get('requires_review', True)}",
+        ]
+        lines.append(f"- {', '.join(parts)}")
+    return lines
+
+
+def _format_equation_ledger(items: Any) -> list[str]:
+    if not items:
+        return ["- None"]
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            lines.append(f"- {item}")
+            continue
+        preview_name = Path(str(item.get("preview_path", ""))).name
+        parts = [
+            f"id={item.get('id', '')}",
+            f"kind={item.get('kind', '')}",
+            f"status={item.get('status', '')}",
+            f"number={item.get('number', '')}",
+            f"text={item.get('text', '')}",
+            f"preview={preview_name}",
+            f"editable_in_word={item.get('editable_in_word', False)}",
             f"requires_review={item.get('requires_review', True)}",
         ]
         lines.append(f"- {', '.join(parts)}")

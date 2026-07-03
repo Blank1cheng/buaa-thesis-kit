@@ -144,3 +144,15 @@ def test_agent_workflow_documents_ocr_ledger():
     assert "OCR Ledger" in workflow
     assert "needs_ocr" in workflow
     assert "pdf-page-001.png" in workflow
+
+
+def test_agent_workflow_documents_equation_ledger():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "Equation Ledger" in text
+        assert "editable_omml" in text
+        assert "editable_ole_object" in text
+        assert "preview_image_needs_review" in text

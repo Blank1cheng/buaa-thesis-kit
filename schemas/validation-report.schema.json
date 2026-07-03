@@ -33,6 +33,30 @@
         }
       }
     },
+    "equation_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "status": {
+            "enum": [
+              "editable_omml",
+              "editable_ole_object",
+              "trusted_latex",
+              "preview_image_needs_review",
+              "manual_transcription_required"
+            ]
+          },
+          "number": {"type": "string"},
+          "text": {"type": "string"},
+          "preview_path": {"type": "string"},
+          "editable_in_word": {"type": "boolean"},
+          "requires_review": {"type": "boolean"}
+        }
+      }
+    },
     "blocking_items": {"type": "array", "items": {"type": "string"}},
     "manual_review": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}}

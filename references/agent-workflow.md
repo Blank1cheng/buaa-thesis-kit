@@ -29,3 +29,7 @@ Use `--strict` for final submission checks. In strict finalization mode, any man
 ## 7. OCR Ledger
 
 For scanned PDF pages or pages with no extractable text, the pipeline must render a page evidence image such as `pdf-page-001.png`, copy it to `output/image/`, and write an `OCR Ledger` entry in `output/report.md`. Each entry should carry the page number, `needs_ocr` status, evidence image, extracted character count, confidence, and review flag. The evidence image must not be inserted as a full-page Word screenshot.
+
+## 8. Equation Ledger
+
+Every run must write an `Equation Ledger` entry for each detected equation. `editable_omml` and `editable_ole_object` may remain in the final Word because they are editable Word/OLE objects. `trusted_latex` may be regenerated as editable math only when the extractor marks it trusted. `preview_image_needs_review` and `manual_transcription_required` are not compliant final states; agents must convert them to editable Word equations or keep the run in `needs_review`. Preview images may be copied to `output/image/` as evidence, but they must not be treated as editable equations.

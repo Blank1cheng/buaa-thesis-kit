@@ -16,7 +16,7 @@ from buaa_thesis_kit.graph_nodes import (
     plan_minimal_fixes,
     visual_compare,
 )
-from buaa_thesis_kit.models import ThesisModel
+from buaa_thesis_kit.models import EquationItem, ThesisModel
 from buaa_thesis_kit.pdf_extract import extract_pdf_model
 from buaa_thesis_kit.pdf_export import export_pdf_from_docx
 from buaa_thesis_kit.tex_gen import generate_tex
@@ -81,6 +81,7 @@ def run_pipeline(
                 _metadata_report(model),
                 {},
                 [],
+                [],
                 strict=strict,
             )
 
@@ -116,6 +117,7 @@ def run_pipeline(
             _metadata_report(model),
             state.editability,
             _ocr_report(model),
+            _equation_report(model),
             strict=strict,
         )
     finally:
@@ -486,6 +488,47 @@ def _ocr_report(model: ThesisModel) -> list[dict[str, Any]]:
     ]
 
 
+def _equation_report(model: ThesisModel) -> list[dict[str, Any]]:
+    return [_equation_report_item(equation) for equation in model.equations]
+
+
+def _equation_report_item(equation: EquationItem) -> dict[str, Any]:
+    return {
+        "id": equation.id,
+        "kind": equation.kind,
+        "status": _equation_status(equation),
+        "number": equation.number,
+        "text": equation.text,
+        "preview_path": equation.preview_path,
+        "editable_in_word": _equation_editable_in_word(equation),
+        "requires_review": equation.requires_review,
+    }
+
+
+def _equation_status(equation: EquationItem) -> str:
+    if equation.omml.strip():
+        return "editable_omml"
+    if _has_existing_ole_equation(equation):
+        return "editable_ole_object"
+    if equation.latex.strip() and not equation.requires_review:
+        return "trusted_latex"
+    if equation.preview_path:
+        return "preview_image_needs_review"
+    return "manual_transcription_required"
+
+
+def _equation_editable_in_word(equation: EquationItem) -> bool:
+    return bool(equation.omml.strip()) or _has_existing_ole_equation(equation)
+
+
+def _has_existing_ole_equation(equation: EquationItem) -> bool:
+    return bool(
+        equation.object_xml.strip()
+        and equation.object_path
+        and Path(equation.object_path).exists()
+    )
+
+
 def _model_failed_message(model: ThesisModel) -> str:
     details = "; ".join(model.extraction_warnings) if model.extraction_warnings else "no details"
     return f"Extraction failed: {details}"
@@ -519,6 +562,7 @@ def _finalize_report(
     metadata: dict[str, Any],
     editability: dict[str, Any],
     ocr_ledger: list[dict[str, Any]],
+    equation_ledger: list[dict[str, Any]],
     strict: bool = False,
 ) -> dict[str, Any]:
     report_path = output_root / "report.md"
@@ -533,6 +577,7 @@ def _finalize_report(
         metadata=metadata,
         editability=editability,
         ocr_ledger=ocr_ledger,
+        equation_ledger=equation_ledger,
     )
     write_report_md(report, report_path)
 
@@ -557,6 +602,7 @@ def _finalize_report(
         metadata=metadata,
         editability=editability,
         ocr_ledger=ocr_ledger,
+        equation_ledger=equation_ledger,
     )
     write_report_md(final_report, report_path)
     return final_report
