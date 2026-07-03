@@ -100,6 +100,14 @@ def _write_text_pdf(path: Path) -> None:
     document.close()
 
 
+def _write_blank_pdf(path: Path) -> None:
+    document = fitz.open()
+    document.new_page(width=300, height=400)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _public_names(output_dir: Path) -> list[str]:
     return sorted(path.name for path in output_dir.iterdir())
 
@@ -214,6 +222,31 @@ def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monke
     assert "This PDF contains extractable thesis text." in document_xml
     assert "20370001" in document_xml
     assert "PDF Extracted Text" not in document_xml
+
+
+def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_screenshot(
+    tmp_path, monkeypatch
+):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "scanned.pdf"
+    output = tmp_path / "output"
+    _write_blank_pdf(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "needs_review"
+    assert (output / "image" / "pdf-page-001.png").is_file()
+    assert any("ocr" in item.lower() for item in report["manual_review"])
+    with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
+        document_xml = docx_zip.read("word/document.xml").decode("utf-8")
+    assert "<w:drawing" not in document_xml
+    assert "[Figure inserted]" not in document_xml
+    assert "OCR/manual transcription required" in document_xml
+    tex = (output / "thesis.tex").read_text(encoding="utf-8")
+    assert "pdf-page-001.png" in tex
+    assert "\\includegraphics" not in tex
 
 
 def test_run_pipeline_doc_input_converts_to_docx_before_extraction(tmp_path, monkeypatch):

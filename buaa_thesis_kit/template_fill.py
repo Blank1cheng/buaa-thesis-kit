@@ -20,6 +20,7 @@ from buaa_thesis_kit.models import AssetItem, ContentBlock, EquationItem, Thesis
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
 BLOCK_PLACEHOLDERS = {"BODY", "REFERENCES", "TABLES", "FIGURES", "EQUATIONS", "APPENDICES"}
 SUPPORTED_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+OCR_EVIDENCE_FIGURE_TYPES = {"pdf-page-image"}
 EQUATION_OBJECT_TOKEN_PREFIX = "__BUAA_EDITABLE_EQUATION_OBJECT__"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -321,7 +322,7 @@ def _insert_table_after_anchor(paragraph: Paragraph, anchor, table_block: Conten
 def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem):
     image_path = Path(figure.path) if figure.path else None
     caption = _figure_caption(figure)
-    if image_path and _is_supported_existing_image(image_path):
+    if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
         picture = _insert_paragraph_after_anchor(paragraph, anchor)
         try:
             picture.add_run().add_picture(str(image_path), width=Inches(5.5))
@@ -475,7 +476,7 @@ def _add_figures(document, figures: Iterable[AssetItem]) -> None:
     for figure in figures:
         image_path = Path(figure.path) if figure.path else None
         caption = _figure_caption(figure)
-        if image_path and _is_supported_existing_image(image_path):
+        if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
             picture = document.add_paragraph()
             try:
                 picture.add_run().add_picture(str(image_path), width=Inches(5.5))
@@ -853,11 +854,17 @@ def _figure_caption(figure: AssetItem) -> str:
 
 
 def _figure_review_text(figure: AssetItem) -> str:
+    if _is_ocr_evidence_figure(figure):
+        return f"[OCR evidence requires transcription] {_figure_caption(figure)}".strip()
     return f"[Figure requires review] {_figure_caption(figure)}".strip()
 
 
 def _is_supported_existing_image(path: Path) -> bool:
     return path.exists() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+
+
+def _is_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return str(figure.type or "").strip().lower() in OCR_EVIDENCE_FIGURE_TYPES
 
 
 def _heading_style(level: int) -> str:
