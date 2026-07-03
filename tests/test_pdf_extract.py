@@ -200,6 +200,34 @@ def test_extract_content_splits_front_matter_and_skips_toc_entries():
     assert "................................................................" not in combined
 
 
+def test_extract_content_filters_pdf_running_headers_and_page_number_fragments():
+    lines = [
+        PdfLine(index=0, page=1, text="北京航空航天大学毕业设计(论文)"),
+        PdfLine(index=1, page=1, text="第"),
+        PdfLine(index=2, page=1, text="页"),
+        PdfLine(index=3, page=1, text="I"),
+        PdfLine(index=4, page=1, text="摘要"),
+        PdfLine(index=5, page=1, text="摘要正文。"),
+        PdfLine(index=6, page=2, text="北京航空航天大学毕业设计(论文)"),
+        PdfLine(index=7, page=2, text="第"),
+        PdfLine(index=8, page=2, text="10"),
+        PdfLine(index=9, page=2, text="页"),
+        PdfLine(index=10, page=2, text="1 绪论"),
+        PdfLine(index=11, page=2, text="正文内容。"),
+    ]
+
+    sections, _references = _extract_content(lines)
+    combined = "\n".join([section.title + "\n" + section.text for section in sections])
+
+    assert "北京航空航天大学毕业设计(论文)" not in combined
+    assert "\n第\n" not in f"\n{combined}\n"
+    assert "\n页\n" not in f"\n{combined}\n"
+    assert "\nI\n" not in f"\n{combined}\n"
+    assert "\n10\n" not in f"\n{combined}\n"
+    assert "摘要正文。" in combined
+    assert "正文内容。" in combined
+
+
 def test_extract_blank_pdf_renders_page_image_and_marks_ocr_review(tmp_path):
     source = tmp_path / "blank.pdf"
     work = tmp_path / "work"

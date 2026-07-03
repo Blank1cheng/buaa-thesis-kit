@@ -39,6 +39,11 @@ SPLIT_HEADING_PAIRS = {
     ("目", "录"): "目录",
 }
 FRONT_MATTER_HEADINGS = {"本人声明", "摘要", "Abstract"}
+RUNNING_HEADER_PREFIXES = (
+    "北京航空航天大学毕业设计(论文)",
+    "北京航空航天大学毕业设计（论文）",
+)
+PAGE_NUMBER_MARKERS = {"第", "页"}
 NEXT_LINE_LABELS: dict[str, str] = {
     "单位代码": "unit_code",
     "学校代码": "unit_code",
@@ -358,8 +363,12 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
     index = 0
     while index < len(content_lines):
         line = content_lines[index]
+        previous_line = content_lines[index - 1] if index > 0 else None
+        following_line = content_lines[index + 1] if index + 1 < len(content_lines) else None
         index += 1
         text = line.text
+        if _is_running_header_footer_line(line, previous_line, following_line):
+            continue
         if _is_metadata_line(text):
             continue
         if _is_toc_heading(text):
@@ -571,6 +580,31 @@ def _is_front_matter_spillover(title: str, title_page: int | None, line: PdfLine
     if title == "摘要":
         return line.page != title_page and not _contains_cjk(line.text)
     return False
+
+
+def _is_running_header_footer_line(
+    line: PdfLine,
+    previous_line: PdfLine | None,
+    following_line: PdfLine | None,
+) -> bool:
+    text = str(line.text or "").strip()
+    if any(text.startswith(prefix) for prefix in RUNNING_HEADER_PREFIXES):
+        return True
+    if text in PAGE_NUMBER_MARKERS:
+        return True
+    if not (_is_plain_page_number(text) or _is_roman_page_number(text)):
+        return False
+    previous_text = str(previous_line.text or "").strip() if previous_line else ""
+    following_text = str(following_line.text or "").strip() if following_line else ""
+    return previous_text in PAGE_NUMBER_MARKERS or following_text in PAGE_NUMBER_MARKERS
+
+
+def _is_plain_page_number(text: str) -> bool:
+    return bool(re.fullmatch(r"\d{1,4}", text))
+
+
+def _is_roman_page_number(text: str) -> bool:
+    return bool(re.fullmatch(r"[IVXLCDM]{1,8}", text, flags=re.IGNORECASE))
 
 
 def _is_metadata_line(text: str) -> bool:
