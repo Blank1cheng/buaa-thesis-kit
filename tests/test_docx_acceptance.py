@@ -65,6 +65,28 @@ def test_inspect_docx_output_blocks_pdf_full_page_screenshot_even_with_editable_
     assert any("word_page_screenshot" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_pdf_word_when_source_body_text_is_not_editable(tmp_path):
+    image = tmp_path / "body-screenshot.png"
+    image.write_bytes(TINY_PNG)
+    output = tmp_path / "metadata-plus-body-image.docx"
+    document = Document()
+    document.add_paragraph("PDF Pipeline Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("Body content is represented by the raster image below.")
+    document.add_picture(str(image), width=Inches(5.5), height=Inches(6.0))
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="PDF Pipeline Thesis", student_id="20370001"),
+        source_kind="pdf",
+        require_spine=False,
+        required_body_snippets=["This source body paragraph must be editable text."],
+    )
+
+    assert any("editable_body_text_missing" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_blocks_docx_word_without_editable_text(tmp_path):
     output = tmp_path / "image-only.docx"
     _write_image_only_docx(output)

@@ -17,6 +17,9 @@ PDF_PLACEHOLDER_HEADING = "PDF Extracted Text"
 EMU_PER_INCH = 914400
 PAGE_SCREENSHOT_MIN_WIDTH_IN = 5.0
 PAGE_SCREENSHOT_MIN_HEIGHT_IN = 7.4
+MAX_BODY_SNIPPETS = 8
+MIN_BODY_SNIPPET_CHARS = 20
+MAX_BODY_SNIPPET_CHARS = 120
 
 
 @dataclass
@@ -33,6 +36,7 @@ def inspect_docx_output(
     *,
     source_kind: str,
     require_spine: bool,
+    required_body_snippets: Iterable[str] | None = None,
 ) -> DocxOutputInspection:
     """Check hard acceptance gates for an authoritative, editable Word output."""
     result = DocxOutputInspection()
@@ -51,6 +55,8 @@ def inspect_docx_output(
     visible_text = _document_visible_text(document)
     compact_text = _compact_text(visible_text)
     editable_chars = len(compact_text)
+    body_snippets = _normalized_body_snippets(required_body_snippets or [])
+    body_snippet_hits = _body_snippet_hits(compact_text, body_snippets)
     result.editability = {
         "editable_characters": editable_chars,
         "paragraph_count": len(document.paragraphs),
@@ -58,6 +64,8 @@ def inspect_docx_output(
         "drawing_count": package_info["drawing_count"],
         "page_screenshot_drawing_count": package_info["page_screenshot_drawing_count"],
         "media_count": package_info["media_count"],
+        "body_snippet_count": len(body_snippets),
+        "body_snippet_hits": body_snippet_hits,
     }
 
     if require_spine and not _contains_any(visible_text, SPINE_MARKERS):
@@ -68,6 +76,12 @@ def inspect_docx_output(
         compact_text,
         metadata,
         package_info,
+        source_kind=source_kind,
+    )
+    _inspect_required_editable_body_text(
+        result,
+        body_snippets,
+        body_snippet_hits,
         source_kind=source_kind,
     )
 
@@ -140,6 +154,22 @@ def _inspect_required_editable_text(
         )
 
 
+def _inspect_required_editable_body_text(
+    result: DocxOutputInspection,
+    body_snippets: list[str],
+    body_snippet_hits: int,
+    *,
+    source_kind: str,
+) -> None:
+    if not body_snippets or body_snippet_hits:
+        return
+    source_label = source_kind.upper() if source_kind else "SOURCE"
+    result.blocking_items.append(
+        f"editable_body_text_missing: {source_label}-derived Word output does not expose "
+        f"sampled source body text as editable text: {len(body_snippets)} sample(s) checked."
+    )
+
+
 def _inspect_docx_package(path: Path) -> dict[str, int]:
     with zipfile.ZipFile(path) as package:
         names = package.namelist()
@@ -196,6 +226,27 @@ def _document_visible_text(document) -> str:
 
 def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _normalized_body_snippets(snippets: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for snippet in snippets:
+        value = _compact_text(snippet)
+        if len(value) < MIN_BODY_SNIPPET_CHARS:
+            continue
+        value = value[:MAX_BODY_SNIPPET_CHARS]
+        if value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+        if len(normalized) >= MAX_BODY_SNIPPETS:
+            break
+    return normalized
+
+
+def _body_snippet_hits(compact_text: str, snippets: Iterable[str]) -> int:
+    return sum(1 for snippet in snippets if snippet in compact_text)
 
 
 def _compact_text(text: str) -> str:

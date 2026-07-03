@@ -22,7 +22,7 @@
 
 ## 6. Editability Audit and strict finalization
 
-Every run must preserve `output/thesis.docx` as the authoritative editable Word document. Agents must inspect the `Editability Audit` section in `output/report.md` before claiming a PDF-derived Word file is usable. For a PDF input, `page_screenshot_drawing_count` must be `0`; page renders may exist only as OCR or manual-review evidence, not as final Word body pages.
+Every run must preserve `output/thesis.docx` as the authoritative editable Word document. Agents must inspect the `Editability Audit` section in `output/report.md` before claiming a PDF-derived Word file is usable. For a PDF input, `page_screenshot_drawing_count` must be `0`; page renders may exist only as OCR or manual-review evidence, not as final Word body pages. `body_snippet_count` and `body_snippet_hits` must show that sampled source body text is present as editable Word text; `editable_body_text_missing` means the Word output may have replaced source body content with raster images and must not be accepted.
 
 Use `--strict` for final submission checks. In strict finalization mode, any manual-review item or `needs_review` output must produce `strict_finalization_failed`, and the CLI must exit non-zero. Non-strict mode may still emit `needs_review` so reviewers can inspect editable Word, PDF, TeX, and image outputs.
 

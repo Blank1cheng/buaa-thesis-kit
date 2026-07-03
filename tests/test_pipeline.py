@@ -277,6 +277,8 @@ def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monke
     assert report["editability"]["editable_characters"] > 0
     assert report["editability"]["paragraph_count"] > 0
     assert report["editability"]["page_screenshot_drawing_count"] == 0
+    assert report["editability"]["body_snippet_count"] > 0
+    assert report["editability"]["body_snippet_hits"] > 0
     assert "## Editability Audit" in (output / "report.md").read_text(encoding="utf-8")
 
 

@@ -129,6 +129,7 @@ def test_agent_workflow_documents_editability_and_strict_finalization():
     assert "--strict" in readme
     assert "Editability Audit" in workflow
     assert "page_screenshot_drawing_count" in workflow
+    assert "body_snippet_hits" in workflow
     assert "--strict" in workflow
     assert "strict_finalization_failed" in workflow
     assert "strict finalization mode" in roadmap

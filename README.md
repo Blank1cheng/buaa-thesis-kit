@@ -72,7 +72,9 @@ python scripts/run_pipeline.py input.pdf --out output --strict
 `output/report.md` 中的 `Editability Audit` 是判断 `thesis.docx` 是否可编辑的机器证据。
 PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只能作为 OCR 或人工复核证据，
 不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count` 和
-`drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。
+`drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。`body_snippet_count`
+和 `body_snippet_hits` 记录从源正文抽样出的文本片段是否能在最终 Word 中以可编辑文本命中；
+若源正文片段完全未命中，说明正文可能被图片替代，必须阻断。
 
 ## 封面几何验收
 

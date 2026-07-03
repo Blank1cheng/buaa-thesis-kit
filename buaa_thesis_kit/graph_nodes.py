@@ -7,7 +7,7 @@ from docx import Document
 from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.graph import GraphState, NodeResult
-from buaa_thesis_kit.models import Metadata
+from buaa_thesis_kit.models import Metadata, ThesisModel
 from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
 from buaa_thesis_kit.reference_acceptance import inspect_references
 from buaa_thesis_kit.template_fill import fill_word_template
@@ -116,6 +116,7 @@ def visual_compare(state: GraphState) -> NodeResult:
             state.model.metadata,
             source_kind=state.source_kind,
             require_spine=True,
+            required_body_snippets=_source_body_snippets(state.model),
         )
         state.editability = dict(inspection.editability)
         for item in inspection.blocking_items:
@@ -178,6 +179,19 @@ def _missing_spine_fields(metadata: Metadata) -> list[str]:
         if not getattr(metadata, field):
             missing.append(field)
     return missing
+
+
+def _source_body_snippets(model: ThesisModel) -> list[str]:
+    snippets: list[str] = []
+    for section in model.sections:
+        for line in str(section.text or "").splitlines():
+            value = line.strip()
+            if len(value) < 20:
+                continue
+            snippets.append(value)
+            if len(snippets) >= 8:
+                return snippets
+    return snippets
 
 
 def _append_spine_page(document, metadata: Metadata) -> None:
