@@ -1,5 +1,6 @@
 import base64
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -191,6 +192,30 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     assert messages == []
     assert any("pdf" in item.lower() and "layout" in item.lower() for item in report["manual_review"])
     assert "PDF Pipeline Thesis" in (output / "thesis.tex").read_text(encoding="utf-8")
+
+
+def test_run_pipeline_pdf_input_uses_visual_preserving_docx_not_text_reflow(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "output"
+    _write_text_pdf(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "needs_review"
+    assert any("visual-preserving" in note for note in report["notes"])
+    with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
+        document_xml = docx_zip.read("word/document.xml").decode("utf-8")
+        media_files = [
+            name
+            for name in docx_zip.namelist()
+            if name.startswith("word/media/") and name.lower().endswith(".png")
+        ]
+
+    assert media_files
+    assert "PDF Extracted Text" not in document_xml
 
 
 def test_run_pipeline_doc_input_converts_to_docx_before_extraction(tmp_path, monkeypatch):

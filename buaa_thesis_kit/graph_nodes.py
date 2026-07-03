@@ -7,6 +7,7 @@ from docx import Document
 
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata
+from buaa_thesis_kit.pdf_visual_render import render_pdf_pages_as_docx
 from buaa_thesis_kit.template_fill import fill_word_template
 
 
@@ -49,6 +50,19 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
 
     if _can_repair_docx_source(state):
         shutil.copy2(Path(state.extraction_source), repaired_docx)
+        document = Document(str(repaired_docx))
+    elif state.source_kind == "pdf":
+        try:
+            page_count = render_pdf_pages_as_docx(Path(state.extraction_source), repaired_docx, state.work_dir)
+        except Exception as exc:
+            state.blocking_items.append(f"PDF visual-preserving Word generation failed: {exc}")
+            return NodeResult(next_node="export_pdf")
+        state.notes.append(
+            f"PDF visual-preserving Word generated from {page_count} rendered source pages."
+        )
+        state.manual_review.append(
+            "PDF visual-preserving DOCX uses page images; text extraction remains auxiliary for metadata and TeX."
+        )
         document = Document(str(repaired_docx))
     else:
         if state.template_path is None:
