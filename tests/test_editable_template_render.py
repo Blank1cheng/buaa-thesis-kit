@@ -4,11 +4,16 @@ from pathlib import Path
 from docx import Document
 
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
-from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
+from buaa_thesis_kit.models import ContentBlock, EquationItem, Metadata, ThesisModel
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "templates" / "buaa_undergraduate_thesis_template.docx"
+OMML_FRAGMENT = (
+    '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+    "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
+    "</m:oMathPara>"
+)
 
 
 def test_render_editable_buaa_docx_reuses_template_without_page_screenshots(tmp_path):
@@ -121,3 +126,37 @@ def test_render_editable_buaa_docx_shrinks_long_cover_table_values(tmp_path):
     assert college_cell.text == "自动化科学与电气工程学院"
     assert sizes
     assert max(sizes) <= 12
+
+
+def test_render_editable_buaa_docx_preserves_omml_equations_as_word_math(tmp_path):
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Equation Template Thesis",
+            student_name="Zhang San",
+            student_id="20370001",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-06",
+            classification="TP273",
+        ),
+        sections=[ContentBlock(id="body-1", type="section", text="Body text.")],
+        equations=[
+            EquationItem(
+                id="eq-omml",
+                kind="omml",
+                text="x+y",
+                omml=OMML_FRAGMENT,
+                requires_review=True,
+            )
+        ],
+    )
+    output = tmp_path / "omml-equation.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    with zipfile.ZipFile(output) as docx_zip:
+        document_xml = docx_zip.read("word/document.xml").decode("utf-8")
+    assert "<m:oMathPara" in document_xml
+    assert "<m:t>x+y</m:t>" in document_xml
+    assert "[Equation requires review]" not in document_xml

@@ -57,6 +57,7 @@ COVER_TITLE_STOP_LABELS = {
     "指导教师",
     "指导老师",
 }
+RELATIONSHIP_ID_ATTR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 
 
 @dataclass(frozen=True)
@@ -684,22 +685,9 @@ def _extract_equations(source_copy: Path) -> list[EquationItem]:
     try:
         with zipfile.ZipFile(source_copy) as docx_zip:
             if "word/document.xml" in docx_zip.namelist():
-                equations.extend(_extract_omml_equations(docx_zip.read("word/document.xml")))
-            embedding_names = [
-                name
-                for name in docx_zip.namelist()
-                if name.startswith("word/embeddings/") and not name.endswith("/")
-            ]
-            for name in embedding_names:
-                equations.append(
-                    EquationItem(
-                        id=f"eq-{len(equations) + 1}",
-                        kind="embedded-object",
-                        text=Path(name).name,
-                        source=_source("docx-embedding", None, 0.72, True),
-                        requires_review=True,
-                    )
-                )
+                document_xml = docx_zip.read("word/document.xml")
+                equations.extend(_extract_omml_equations(document_xml))
+                equations.extend(_extract_embedded_equations(docx_zip, document_xml, len(equations)))
     except zipfile.BadZipFile:
         return equations
     return equations
@@ -716,17 +704,72 @@ def _extract_omml_equations(document_xml: bytes) -> list[EquationItem]:
     equations: list[EquationItem] = []
     for node in omml_nodes:
         text = "".join(node.xpath(".//*[local-name()='t']/text()")).strip()
+        omml = etree.tostring(node, encoding="unicode")
         review_required = True
         equations.append(
             EquationItem(
                 id=f"eq-{len(equations) + 1}",
                 kind="omml",
                 text=text,
+                omml=omml,
                 source=_source("docx-omml", None, 0.95, review_required),
                 requires_review=review_required,
             )
         )
     return equations
+
+
+def _extract_embedded_equations(
+    docx_zip: zipfile.ZipFile,
+    document_xml: bytes,
+    existing_count: int,
+) -> list[EquationItem]:
+    try:
+        root = etree.fromstring(document_xml)
+    except etree.XMLSyntaxError:
+        return []
+
+    relationships = _document_relationship_targets(docx_zip)
+    equations: list[EquationItem] = []
+    for ole_object in root.xpath("//*[local-name()='OLEObject']"):
+        prog_id = str(ole_object.get("ProgID") or "")
+        if not _is_equation_ole_object(prog_id):
+            continue
+        relationship_id = ole_object.get(RELATIONSHIP_ID_ATTR) or ""
+        target = relationships.get(relationship_id, "")
+        display_name = Path(target).name if target else str(ole_object.get("ObjectID") or "embedded-equation")
+        equations.append(
+            EquationItem(
+                id=f"eq-{existing_count + len(equations) + 1}",
+                kind="embedded-object",
+                text=display_name,
+                source=_source("docx-embedded-equation", None, 0.78, True),
+                requires_review=True,
+            )
+        )
+    return equations
+
+
+def _document_relationship_targets(docx_zip: zipfile.ZipFile) -> dict[str, str]:
+    rels_name = "word/_rels/document.xml.rels"
+    if rels_name not in docx_zip.namelist():
+        return {}
+    try:
+        root = etree.fromstring(docx_zip.read(rels_name))
+    except etree.XMLSyntaxError:
+        return {}
+    targets: dict[str, str] = {}
+    for relationship in root.xpath("//*[local-name()='Relationship']"):
+        rel_id = relationship.get("Id")
+        target = relationship.get("Target")
+        if rel_id and target:
+            targets[rel_id] = target
+    return targets
+
+
+def _is_equation_ole_object(prog_id: str) -> bool:
+    normalized = prog_id.casefold()
+    return "equation" in normalized or "mathtype" in normalized
 
 
 def _build_warnings(model: ThesisModel) -> list[str]:

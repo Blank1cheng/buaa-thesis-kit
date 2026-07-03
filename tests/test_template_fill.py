@@ -13,6 +13,11 @@ TINY_PNG = (
     b"\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02\x00\x00\x00\x0bIDATx\xdac\xfc\xff"
     b"\x1f\x00\x03\x03\x02\x00\xef\xbf\xa7\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+OMML_FRAGMENT = (
+    '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+    "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
+    "</m:oMathPara>"
+)
 
 
 def _sample_model(tmp_path: Path) -> ThesisModel:
@@ -263,6 +268,32 @@ def test_figures_placeholder_inserts_supported_image_and_reviews_missing_image(t
     assert "[Figure requires review] Missing figure" in text
     with zipfile.ZipFile(output) as package:
         assert any(name.startswith("word/media/") for name in package.namelist())
+
+
+def test_equations_placeholder_inserts_omml_word_math(tmp_path):
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-omml",
+            kind="omml",
+            text="x+y",
+            omml=OMML_FRAGMENT,
+            requires_review=True,
+        )
+    ]
+    template = tmp_path / "equation-placeholder.docx"
+    output = tmp_path / "out" / "thesis.docx"
+    doc = Document()
+    doc.add_paragraph("{{EQUATIONS}}")
+    doc.save(template)
+
+    fill_word_template(template, model, output)
+
+    with zipfile.ZipFile(output) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+    assert "<m:oMathPara" in document_xml
+    assert "<m:t>x+y</m:t>" in document_xml
+    assert "[Equation requires review]" not in document_xml
 
 
 def test_inline_scalar_replacement_preserves_unrelated_bold_run(tmp_path):

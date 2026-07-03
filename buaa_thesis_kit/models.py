@@ -78,6 +78,7 @@ class EquationItem:
     text: str = ""
     number: str = ""
     latex: str = ""
+    omml: str = ""
     source: SourceEvidence | None = None
     requires_review: bool = True
 

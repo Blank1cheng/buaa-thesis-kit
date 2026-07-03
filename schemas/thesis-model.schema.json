@@ -83,13 +83,14 @@
     },
     "equationItem": {
       "type": "object",
-      "required": ["id", "kind", "text", "number", "latex", "source", "requires_review"],
+      "required": ["id", "kind", "text", "number", "latex", "omml", "source", "requires_review"],
       "properties": {
         "id": {"type": "string"},
         "kind": {"type": "string"},
         "text": {"type": "string"},
         "number": {"type": "string"},
         "latex": {"type": "string"},
+        "omml": {"type": "string"},
         "source": {
           "anyOf": [
             {"$ref": "#/$defs/sourceEvidence"},

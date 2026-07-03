@@ -59,6 +59,49 @@ def _patch_docx_zip(
     patched_path.replace(docx_path)
 
 
+def _patch_docx_with_ole_objects(docx_path: Path) -> None:
+    patched_path = docx_path.with_suffix(".ole.docx")
+    equation_object = (
+        '<w:p><w:r><w:object>'
+        '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'Type="Embed" ProgID="Equation.DSMT4" r:id="rIdEquation"/>'
+        "</w:object></w:r></w:p>"
+    ).encode("utf-8")
+    visio_object = (
+        '<w:p><w:r><w:object>'
+        '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'Type="Embed" ProgID="Visio.Drawing.15" r:id="rIdVisio"/>'
+        "</w:object></w:r></w:p>"
+    ).encode("utf-8")
+    relationships = (
+        '<Relationship Id="rIdEquation" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
+        'Target="embeddings/equation.bin"/>'
+        '<Relationship Id="rIdVisio" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
+        'Target="embeddings/visio.vsdx"/>'
+    ).encode("utf-8")
+    content_types = (
+        '<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>'
+        '<Default Extension="vsdx" ContentType="application/vnd.ms-visio.drawing.main+xml"/>'
+    ).encode("utf-8")
+    with zipfile.ZipFile(docx_path, "r") as source, zipfile.ZipFile(patched_path, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "word/document.xml":
+                data = data.replace(b"</w:body>", equation_object + visio_object + b"</w:body>")
+            elif info.filename == "word/_rels/document.xml.rels":
+                data = data.replace(b"</Relationships>", relationships + b"</Relationships>")
+            elif info.filename == "[Content_Types].xml":
+                data = data.replace(b"</Types>", content_types + b"</Types>")
+            target.writestr(info, data)
+        target.writestr("word/embeddings/equation.bin", b"equation ole payload")
+        target.writestr("word/embeddings/visio.vsdx", b"visio payload")
+    patched_path.replace(docx_path)
+
+
 def test_extracts_metadata_from_paragraphs_and_tables_with_evidence(tmp_path):
     source = tmp_path / "metadata.docx"
     work_dir = tmp_path / "work"
@@ -292,15 +335,45 @@ def test_detects_omml_and_embedded_equations(tmp_path):
             "[1] 王五. 公式测试[J]. 2026.",
         ],
     )
-    _patch_docx_zip(source, add_omml=True, add_embedding=True)
+    _patch_docx_zip(source, add_omml=True)
+    _patch_docx_with_ole_objects(source)
 
     model = extract_thesis_model(source, tmp_path / "work")
 
     by_kind = {equation.kind: equation for equation in model.equations}
     assert by_kind["omml"].requires_review is True
+    assert by_kind["omml"].omml.startswith("<m:oMathPara")
+    assert "<m:t>x+y</m:t>" in by_kind["omml"].omml
     assert by_kind["embedded-object"].requires_review is True
     assert "OMML equations require TeX review" in model.extraction_warnings
     assert model.status == "needs_review"
+
+
+def test_embedded_visio_objects_are_not_counted_as_equations(tmp_path):
+    source = tmp_path / "ole-classification.docx"
+    _save_docx(
+        source,
+        [
+            "中文题目：嵌入对象分类测试",
+            "学生姓名：张三",
+            "学号：20370001",
+            "学院：自动化科学与电气工程学院",
+            "专业：自动化",
+            "指导教师：李四",
+            "日期：2026年6月",
+            "1 绪论",
+            "正文。",
+            "参考文献",
+            "[1] 王五. 嵌入对象测试[J]. 2026.",
+        ],
+    )
+    _patch_docx_with_ole_objects(source)
+
+    model = extract_thesis_model(source, tmp_path / "work")
+
+    assert [(equation.kind, equation.text) for equation in model.equations] == [
+        ("embedded-object", "equation.bin")
+    ]
 
 
 def test_duplicate_media_basenames_are_extracted_to_unique_paths(tmp_path):

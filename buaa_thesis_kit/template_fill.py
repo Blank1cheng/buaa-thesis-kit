@@ -7,7 +7,7 @@ from typing import Iterable
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
+from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.shared import Inches, Mm, Pt
@@ -36,6 +36,14 @@ class RenderedTable:
 @dataclass(frozen=True)
 class RenderedFigure:
     figure: AssetItem
+
+
+@dataclass(frozen=True)
+class RenderedEquation:
+    equation: EquationItem
+
+
+RenderedItem = RenderedParagraph | RenderedTable | RenderedFigure | RenderedEquation
 
 
 def fill_word_template(template_path: Path, model: ThesisModel, output_path: Path) -> None:
@@ -89,8 +97,8 @@ def _has_block_placeholder(text: str) -> bool:
     return any(match.group(1) in BLOCK_PLACEHOLDERS for match in PLACEHOLDER_RE.finditer(text))
 
 
-def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedParagraph | RenderedTable | RenderedFigure]:
-    rendered: list[RenderedParagraph | RenderedTable | RenderedFigure] = []
+def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedItem]:
+    rendered: list[RenderedItem] = []
     cursor = 0
     for match in PLACEHOLDER_RE.finditer(text):
         leading = text[cursor : match.start()]
@@ -116,7 +124,7 @@ def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedPar
     return rendered
 
 
-def _render_block_placeholder(token: str, model: ThesisModel) -> list[RenderedParagraph | RenderedTable | RenderedFigure]:
+def _render_block_placeholder(token: str, model: ThesisModel) -> list[RenderedItem]:
     if token == "BODY":
         return _render_sections(model.sections)
     if token == "REFERENCES":
@@ -216,7 +224,7 @@ def _remove_unresolved_placeholders_preserving_spacing(text: str) -> str:
 
 def _replace_paragraph_with_items(
     paragraph: Paragraph,
-    rendered: list[RenderedParagraph | RenderedTable | RenderedFigure],
+    rendered: list[RenderedItem],
 ) -> None:
     if not rendered:
         _replace_paragraph_text(paragraph, "")
@@ -249,7 +257,7 @@ def _insert_paragraph_after_anchor(paragraph: Paragraph, anchor) -> Paragraph:
 def _insert_item_after_anchor(
     paragraph: Paragraph,
     anchor,
-    item: RenderedParagraph | RenderedTable | RenderedFigure,
+    item: RenderedItem,
 ):
     if isinstance(item, RenderedParagraph):
         inserted = _insert_paragraph_after_anchor(paragraph, anchor)
@@ -257,7 +265,9 @@ def _insert_item_after_anchor(
         return inserted._p
     if isinstance(item, RenderedTable):
         return _insert_table_after_anchor(paragraph, anchor, item.block)
-    return _insert_figure_after_anchor(paragraph, anchor, item.figure)
+    if isinstance(item, RenderedFigure):
+        return _insert_figure_after_anchor(paragraph, anchor, item.figure)
+    return _insert_equation_after_anchor(paragraph, anchor, item.equation)
 
 
 def _insert_table_after_anchor(paragraph: Paragraph, anchor, table_block: ContentBlock):
@@ -303,6 +313,12 @@ def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem)
     review = _insert_paragraph_after_anchor(paragraph, anchor)
     _replace_paragraph_text(review, _figure_review_text(figure))
     return review._p
+
+
+def _insert_equation_after_anchor(paragraph: Paragraph, anchor, equation: EquationItem):
+    inserted = _insert_paragraph_after_anchor(paragraph, anchor)
+    _apply_equation(inserted, equation)
+    return inserted._p
 
 
 def _apply_rendered_paragraph(paragraph: Paragraph, rendered: RenderedParagraph) -> None:
@@ -450,7 +466,11 @@ def _add_figures(document, figures: Iterable[AssetItem]) -> None:
 
 def _add_equations(document, equations: Iterable[EquationItem]) -> None:
     for item in _render_equations(equations):
-        document.add_paragraph(item.text)
+        paragraph = document.add_paragraph()
+        if isinstance(item, RenderedEquation):
+            _apply_equation(paragraph, item.equation)
+        else:
+            _apply_rendered_paragraph(paragraph, item)
 
 
 def _add_references(document, references: Iterable[ContentBlock]) -> None:
@@ -502,14 +522,35 @@ def _render_figures_as_review_paragraphs(figures: Iterable[AssetItem]) -> list[R
     return [RenderedParagraph(_figure_review_text(figure)) for figure in figures]
 
 
-def _render_equations(equations: Iterable[EquationItem]) -> list[RenderedParagraph]:
-    rendered: list[RenderedParagraph] = []
+def _render_equations(equations: Iterable[EquationItem]) -> list[RenderedEquation | RenderedParagraph]:
+    rendered: list[RenderedEquation | RenderedParagraph] = []
     for equation in equations:
-        content = equation.latex or equation.text or "manual conversion required"
-        number = f" {equation.number}" if equation.number else ""
-        prefix = "[Equation requires review]" if equation.requires_review else "[Equation]"
-        rendered.append(RenderedParagraph(f"{prefix}{number} {content}".strip()))
+        if equation.omml.strip():
+            rendered.append(RenderedEquation(equation))
+        else:
+            rendered.append(RenderedParagraph(_equation_review_text(equation)))
     return rendered
+
+
+def _apply_equation(paragraph: Paragraph, equation: EquationItem) -> None:
+    omml = equation.omml.strip()
+    if omml:
+        try:
+            paragraph.clear()
+            paragraph._p.append(parse_xml(omml))
+            if equation.number:
+                paragraph.add_run(f" {equation.number}")
+            return
+        except Exception:
+            pass
+    _replace_paragraph_text(paragraph, _equation_review_text(equation))
+
+
+def _equation_review_text(equation: EquationItem) -> str:
+    content = equation.latex or equation.text or "manual conversion required"
+    number = f" {equation.number}" if equation.number else ""
+    prefix = "[Equation requires review]" if equation.requires_review else "[Equation]"
+    return f"{prefix}{number} {content}".strip()
 
 
 def _render_appendices(appendices: Iterable[ContentBlock]) -> list[RenderedParagraph]:
