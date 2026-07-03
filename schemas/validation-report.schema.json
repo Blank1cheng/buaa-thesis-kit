@@ -8,6 +8,17 @@
     "outputs": {"type": "object"},
     "summary": {"type": "object"},
     "metadata": {"type": "object"},
+    "editability": {
+      "type": "object",
+      "properties": {
+        "editable_characters": {"type": "integer", "minimum": 0},
+        "paragraph_count": {"type": "integer", "minimum": 0},
+        "table_count": {"type": "integer", "minimum": 0},
+        "drawing_count": {"type": "integer", "minimum": 0},
+        "page_screenshot_drawing_count": {"type": "integer", "minimum": 0},
+        "media_count": {"type": "integer", "minimum": 0}
+      }
+    },
     "blocking_items": {"type": "array", "items": {"type": "string"}},
     "manual_review": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}}

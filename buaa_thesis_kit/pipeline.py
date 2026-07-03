@@ -47,6 +47,7 @@ def run_pipeline(
     output_dir: Path,
     template_path: Path | None = None,
     keep_work: bool = False,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Run the BUAA thesis repair-first graph pipeline."""
     source_path = Path(source).expanduser().resolve(strict=False)
@@ -78,6 +79,8 @@ def run_pipeline(
                 manual_review,
                 notes,
                 _metadata_report(model),
+                {},
+                strict=strict,
             )
 
         work_dir, remove_work = _prepare_work_dir(output_root, keep_work)
@@ -110,6 +113,8 @@ def run_pipeline(
             state.manual_review,
             state.notes,
             _metadata_report(model),
+            state.editability,
+            strict=strict,
         )
     finally:
         if work_dir is not None and remove_work:
@@ -482,16 +487,20 @@ def _finalize_report(
     manual_review: list[str],
     notes: list[str],
     metadata: dict[str, Any],
+    editability: dict[str, Any],
+    strict: bool = False,
 ) -> dict[str, Any]:
     report_path = output_root / "report.md"
+    initial_blocking = _strict_blocking_items(blocking_items, manual_review, outputs, strict=strict)
     report = build_report(
         source=str(source),
         outputs=outputs,
         summary=summary,
-        blocking_items=_dedupe(blocking_items),
+        blocking_items=_dedupe(initial_blocking),
         manual_review=_dedupe(manual_review),
         notes=_dedupe(notes),
         metadata=metadata,
+        editability=editability,
     )
     write_report_md(report, report_path)
 
@@ -504,6 +513,7 @@ def _finalize_report(
         final_blocking.extend(
             f"Clean output validation failed: {message}" for message in clean_messages
         )
+    final_blocking = _strict_blocking_items(final_blocking, manual_review, outputs, strict=strict)
 
     final_report = build_report(
         source=str(source),
@@ -513,9 +523,38 @@ def _finalize_report(
         manual_review=_dedupe(manual_review),
         notes=_dedupe(final_notes),
         metadata=metadata,
+        editability=editability,
     )
     write_report_md(final_report, report_path)
     return final_report
+
+
+def _strict_blocking_items(
+    blocking_items: list[str],
+    manual_review: list[str],
+    outputs: dict[str, str],
+    *,
+    strict: bool,
+) -> list[str]:
+    if not strict:
+        return list(blocking_items)
+    if not manual_review and not any(status == "needs_review" for status in outputs.values()):
+        return list(blocking_items)
+
+    result = list(blocking_items)
+    review_count = len(manual_review)
+    review_outputs = sorted(key for key, status in outputs.items() if status == "needs_review")
+    detail = []
+    if review_count:
+        detail.append(f"{review_count} manual review item(s)")
+    if review_outputs:
+        detail.append(f"needs_review outputs: {', '.join(review_outputs)}")
+    result.append(
+        "strict_finalization_failed: "
+        + "; ".join(detail)
+        + ". Resolve all review items before final submission."
+    )
+    return result
 
 
 def _dedupe(items: list[str]) -> list[str]:

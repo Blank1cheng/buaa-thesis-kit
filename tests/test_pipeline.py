@@ -236,6 +236,22 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     assert "student_id: 20370001" in (output / "report.md").read_text(encoding="utf-8")
 
 
+def test_run_pipeline_strict_mode_fails_when_review_items_remain(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "output"
+    _write_text_pdf(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output, strict=True)
+
+    assert report["status"] == "failed"
+    assert any("strict_finalization_failed" in item for item in report["blocking_items"])
+    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    assert "strict_finalization_failed" in (output / "report.md").read_text(encoding="utf-8")
+
+
 def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 
@@ -255,6 +271,10 @@ def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monke
     assert "This PDF contains extractable thesis text." in document_xml
     assert "20370001" in document_xml
     assert "PDF Extracted Text" not in document_xml
+    assert report["editability"]["editable_characters"] > 0
+    assert report["editability"]["paragraph_count"] > 0
+    assert report["editability"]["page_screenshot_drawing_count"] == 0
+    assert "## Editability Audit" in (output / "report.md").read_text(encoding="utf-8")
 
 
 def test_run_pipeline_pdf_table_becomes_editable_word_table(tmp_path, monkeypatch):
@@ -429,3 +449,20 @@ def test_cli_main_prints_json_and_returns_status_based_exit_codes(tmp_path, monk
     assert pass_payload["summary"]["sections"] >= 1
     assert fail_code == 1
     assert fail_payload["status"] == "failed"
+
+
+def test_cli_strict_mode_returns_failure_for_needs_review(tmp_path, monkeypatch, capsys):
+    import buaa_thesis_kit.pipeline as pipeline
+    import scripts.run_pipeline as cli
+
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "output"
+    _write_text_pdf(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    code = cli.main([str(source), "--out", str(output), "--strict"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 1
+    assert payload["status"] == "failed"
+    assert any("strict_finalization_failed" in item for item in payload["blocking_items"])

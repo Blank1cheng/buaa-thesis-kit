@@ -23,6 +23,11 @@ def main(args: list[str] | None = None) -> int:
         action="store_true",
         help="Retain the adjacent process work directory for inspection.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail finalization when any output or report item still needs manual review.",
+    )
     namespace = parser.parse_args(args)
 
     report = run_pipeline(
@@ -30,6 +35,7 @@ def main(args: list[str] | None = None) -> int:
         namespace.out,
         template_path=namespace.template,
         keep_work=namespace.keep_work,
+        strict=namespace.strict,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report.get("status") in {"pass", "needs_review"} else 1

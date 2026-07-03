@@ -117,6 +117,7 @@ def visual_compare(state: GraphState) -> NodeResult:
             source_kind=state.source_kind,
             require_spine=True,
         )
+        state.editability = dict(inspection.editability)
         for item in inspection.blocking_items:
             _append_once(state.blocking_items, item)
         for item in inspection.manual_review:

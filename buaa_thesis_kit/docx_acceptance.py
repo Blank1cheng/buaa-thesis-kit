@@ -24,6 +24,7 @@ class DocxOutputInspection:
     blocking_items: list[str] = field(default_factory=list)
     manual_review: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    editability: dict[str, int] = field(default_factory=dict)
 
 
 def inspect_docx_output(
@@ -50,6 +51,14 @@ def inspect_docx_output(
     visible_text = _document_visible_text(document)
     compact_text = _compact_text(visible_text)
     editable_chars = len(compact_text)
+    result.editability = {
+        "editable_characters": editable_chars,
+        "paragraph_count": len(document.paragraphs),
+        "table_count": len(document.tables),
+        "drawing_count": package_info["drawing_count"],
+        "page_screenshot_drawing_count": package_info["page_screenshot_drawing_count"],
+        "media_count": package_info["media_count"],
+    }
 
     if require_spine and not _contains_any(visible_text, SPINE_MARKERS):
         result.blocking_items.append("spine_missing: authoritative Word output has no book spine marker.")
@@ -93,7 +102,8 @@ def inspect_docx_output(
     if not result.blocking_items:
         result.notes.append(
             f"editable Word validation passed: {editable_chars} editable characters, "
-            f"{package_info['drawing_count']} drawings."
+            f"{package_info['drawing_count']} drawings, "
+            f"{package_info['page_screenshot_drawing_count']} page-sized screenshots."
         )
     return result
 

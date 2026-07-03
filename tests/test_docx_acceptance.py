@@ -147,4 +147,7 @@ def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     )
 
     assert result.blocking_items == []
+    assert result.editability["editable_characters"] > 0
+    assert result.editability["paragraph_count"] > 0
+    assert result.editability["page_screenshot_drawing_count"] == 0
     assert any("editable Word validation passed" in note for note in result.notes)

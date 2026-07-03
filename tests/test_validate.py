@@ -226,6 +226,28 @@ def test_build_report_includes_metadata_when_provided():
     assert report["metadata"] == metadata
 
 
+def test_build_report_includes_editability_audit_when_provided():
+    editability = {
+        "editable_characters": 1200,
+        "paragraph_count": 42,
+        "table_count": 2,
+        "drawing_count": 3,
+        "page_screenshot_drawing_count": 0,
+    }
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        editability=editability,
+    )
+
+    assert report["editability"] == editability
+
+
 def test_build_report_fails_for_missing_required_or_unknown_output_statuses():
     no_outputs = build_report(
         source="source.docx",
@@ -322,6 +344,32 @@ def test_write_report_md_includes_metadata_values_and_evidence(tmp_path):
     assert "method=pdf-title-heuristic" in text
     assert "- student_id: 20370001" in text
     assert "confidence=0.7" in text
+
+
+def test_write_report_md_includes_editability_audit(tmp_path):
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        editability={
+            "editable_characters": 1200,
+            "paragraph_count": 42,
+            "table_count": 2,
+            "drawing_count": 3,
+            "page_screenshot_drawing_count": 0,
+        },
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Editability Audit" in text
+    assert "- editable_characters: 1200" in text
+    assert "- page_screenshot_drawing_count: 0" in text
 
 
 def test_export_pdf_from_docx_returns_false_for_missing_source_without_junk(tmp_path):

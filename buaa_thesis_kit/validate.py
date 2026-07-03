@@ -89,6 +89,7 @@ def build_report(
     manual_review: list[str],
     notes: list[str],
     metadata: dict[str, Any] | None = None,
+    editability: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output_statuses = [_normalize_status(status) for status in outputs.values()]
     missing_required = _missing_required_report_outputs(outputs)
@@ -112,6 +113,8 @@ def build_report(
     }
     if metadata is not None:
         report["metadata"] = metadata
+    if editability is not None:
+        report["editability"] = editability
     return report
 
 
@@ -135,6 +138,10 @@ def write_report_md(report: dict[str, Any], path: Path) -> None:
         "## Summary",
         "",
         *_format_mapping(report.get("summary", {})),
+        "",
+        "## Editability Audit",
+        "",
+        *_format_mapping(report.get("editability", {})),
         "",
         "## Metadata",
         "",
