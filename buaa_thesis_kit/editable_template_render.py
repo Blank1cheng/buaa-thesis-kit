@@ -20,6 +20,7 @@ from buaa_thesis_kit.template_fill import (
     _add_sections,
     _add_tables,
     _apply_conservative_formatting,
+    finalize_equation_objects,
 )
 
 
@@ -41,6 +42,7 @@ def render_editable_buaa_docx(template_path: Path, model: ThesisModel, output_pa
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     document.save(str(output))
+    finalize_equation_objects(output, model.equations)
 
 
 def _replace_cover_fields(document, metadata: Metadata) -> None:

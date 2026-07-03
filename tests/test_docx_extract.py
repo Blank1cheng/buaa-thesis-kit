@@ -355,6 +355,9 @@ def test_detects_omml_and_embedded_equations(tmp_path):
     assert "<m:t>x+y</m:t>" in by_kind["omml"].omml
     assert by_kind["embedded-object"].requires_review is True
     assert Path(by_kind["embedded-object"].preview_path).read_bytes() == TINY_PNG
+    assert Path(by_kind["embedded-object"].object_path).read_bytes() == b"equation ole payload"
+    assert "<o:OLEObject" in by_kind["embedded-object"].object_xml
+    assert 'ProgID="Equation.DSMT4"' in by_kind["embedded-object"].object_xml
     assert "OMML equations require TeX review" in model.extraction_warnings
     assert model.status == "needs_review"
 
@@ -385,6 +388,8 @@ def test_embedded_visio_objects_are_not_counted_as_equations(tmp_path):
         ("embedded-object", "equation.bin")
     ]
     assert Path(model.equations[0].preview_path).read_bytes() == TINY_PNG
+    assert Path(model.equations[0].object_path).read_bytes() == b"equation ole payload"
+    assert "Visio.Drawing" not in model.equations[0].object_xml
 
 
 def test_duplicate_media_basenames_are_extracted_to_unique_paths(tmp_path):

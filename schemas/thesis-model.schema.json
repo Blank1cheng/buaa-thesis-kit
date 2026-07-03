@@ -83,7 +83,7 @@
     },
     "equationItem": {
       "type": "object",
-      "required": ["id", "kind", "text", "number", "latex", "omml", "preview_path", "source", "requires_review"],
+      "required": ["id", "kind", "text", "number", "latex", "omml", "preview_path", "object_path", "object_xml", "source", "requires_review"],
       "properties": {
         "id": {"type": "string"},
         "kind": {"type": "string"},
@@ -92,6 +92,8 @@
         "latex": {"type": "string"},
         "omml": {"type": "string"},
         "preview_path": {"type": "string"},
+        "object_path": {"type": "string"},
+        "object_xml": {"type": "string"},
         "source": {
           "anyOf": [
             {"$ref": "#/$defs/sourceEvidence"},

@@ -52,6 +52,42 @@ def test_inspect_docx_output_blocks_docx_word_without_editable_text(tmp_path):
     assert any("editable_text_missing" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_equation_preview_screenshot_substitute(tmp_path):
+    output = tmp_path / "equation-preview.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("[Equation preview inserted] equation.bin")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("editable_equation_missing" in item for item in result.blocking_items)
+
+
+def test_inspect_docx_output_blocks_internal_equation_object_token(tmp_path):
+    output = tmp_path / "equation-token.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("__BUAA_EDITABLE_EQUATION_OBJECT__buaa-equation-eq-1__")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("editable_equation_object_token_visible" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     output = tmp_path / "editable.docx"
     model = ThesisModel(

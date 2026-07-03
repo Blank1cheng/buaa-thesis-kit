@@ -80,6 +80,8 @@ class EquationItem:
     latex: str = ""
     omml: str = ""
     preview_path: str = ""
+    object_path: str = ""
+    object_xml: str = ""
     source: SourceEvidence | None = None
     requires_review: bool = True
 

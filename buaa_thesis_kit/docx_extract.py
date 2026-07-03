@@ -733,6 +733,7 @@ def _extract_embedded_equations(
     relationships = _document_relationship_targets(docx_zip)
     equations: list[EquationItem] = []
     used_preview_names: set[str] = set()
+    used_object_names: set[str] = set()
     for ole_object in root.xpath("//*[local-name()='OLEObject']"):
         prog_id = str(ole_object.get("ProgID") or "")
         if not _is_equation_ole_object(prog_id):
@@ -740,6 +741,12 @@ def _extract_embedded_equations(
         relationship_id = ole_object.get(RELATIONSHIP_ID_ATTR) or ""
         target = relationships.get(relationship_id, "")
         display_name = Path(target).name if target else str(ole_object.get("ObjectID") or "embedded-equation")
+        object_path = _extract_ole_payload(
+            docx_zip,
+            target,
+            work_dir,
+            used_object_names,
+        )
         preview_path = _extract_ole_preview_image(
             docx_zip,
             ole_object,
@@ -753,6 +760,8 @@ def _extract_embedded_equations(
                 kind="embedded-object",
                 text=display_name,
                 preview_path=str(preview_path.resolve()) if preview_path is not None else "",
+                object_path=str(object_path.resolve()) if object_path is not None else "",
+                object_xml=_extract_ole_object_xml(ole_object),
                 source=_source("docx-embedded-equation", None, 0.78, True),
                 requires_review=True,
             )
@@ -782,6 +791,31 @@ def _extract_ole_preview_image(
     destination = _unique_media_destination(preview_dir, Path(part_name).name, used_names)
     destination.write_bytes(docx_zip.read(part_name))
     return destination
+
+
+def _extract_ole_payload(
+    docx_zip: zipfile.ZipFile,
+    target: str,
+    work_dir: Path,
+    used_names: set[str],
+) -> Path | None:
+    if not target:
+        return None
+    part_name = _word_part_name(target)
+    if part_name not in docx_zip.namelist():
+        return None
+    object_dir = work_dir / "equation-object"
+    object_dir.mkdir(parents=True, exist_ok=True)
+    destination = _unique_media_destination(object_dir, Path(part_name).name, used_names)
+    destination.write_bytes(docx_zip.read(part_name))
+    return destination
+
+
+def _extract_ole_object_xml(ole_object) -> str:
+    object_nodes = ole_object.xpath("ancestor::*[local-name()='object'][1]")
+    if not object_nodes:
+        return ""
+    return etree.tostring(object_nodes[0], encoding="unicode")
 
 
 def _word_part_name(target: str) -> str:

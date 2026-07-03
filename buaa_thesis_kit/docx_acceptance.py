@@ -63,6 +63,16 @@ def inspect_docx_output(
             "pdf_placeholder_heading_visible: remove internal PDF Extracted Text heading from Word output."
         )
 
+    if "[Equation preview inserted]" in visible_text:
+        result.blocking_items.append(
+            "editable_equation_missing: equation preview image was inserted instead of an editable Word/OMML/OLE equation object."
+        )
+
+    if "__BUAA_EDITABLE_EQUATION_OBJECT__" in visible_text:
+        result.blocking_items.append(
+            "editable_equation_object_token_visible: internal editable equation placeholder was not converted to a Word/OLE object."
+        )
+
     unresolved = re.findall(r"\{\{\s*[A-Z_]+\s*\}\}", visible_text)
     if unresolved:
         result.blocking_items.append(
