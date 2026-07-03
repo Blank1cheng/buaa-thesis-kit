@@ -1,0 +1,37 @@
+canonical_order:
+  - cover
+  - task_book
+  - declaration
+  - chinese_abstract
+  - english_abstract
+  - toc
+  - body
+  - acknowledgements
+  - references
+required_sections:
+  - cover
+  - task_book
+  - declaration
+  - chinese_abstract
+  - english_abstract
+  - toc
+  - body
+  - references
+manual_review_sections:
+  - acknowledgements
+optional:
+  - appendices
+anchors:
+  task_book: ["本科生毕业设计（论文）任务书", "本科毕业设计（论文）任务书"]
+  declaration: ["本人声明", "原创性声明"]
+  chinese_abstract: ["摘 要", "摘要"]
+  english_abstract: ["Abstract"]
+  toc: ["目录"]
+  acknowledgements: ["致谢", "谢辞"]
+  references: ["参考文献"]
+  appendices: ["附录", "附录A", "附录 A"]
+body_heading_patterns:
+  chapter: "^\\s*[1-9]\\d*\\s+[^.。]+$"
+  section: "^\\s*[1-9]\\d*\\.[1-9]\\d*\\s+"
+  subsection: "^\\s*[1-9]\\d*\\.[1-9]\\d*\\.[1-9]\\d*\\s+"
+toc_field_markers: ["HYPERLINK", "PAGEREF", "TOC \\\\", "MERGEFORMAT"]

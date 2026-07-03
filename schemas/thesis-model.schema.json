@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["metadata", "sections", "figures", "tables", "equations", "references", "status"],
+  "properties": {
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "front_matter": {"type": "object"},
+    "sections": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
+    "figures": {"type": "array", "items": {"$ref": "#/$defs/assetItem"}},
+    "tables": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
+    "equations": {"type": "array", "items": {"$ref": "#/$defs/equationItem"}},
+    "references": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
+    "appendices": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
+    "extraction_warnings": {"type": "array", "items": {"type": "string"}},
+    "status": {"enum": ["draft", "pass", "needs_review", "failed"]}
+  },
+  "$defs": {
+    "sourceEvidence": {
+      "type": "object",
+      "required": ["file", "method", "confidence", "requires_review"],
+      "properties": {
+        "file": {"type": "string"},
+        "method": {"type": "string"},
+        "paragraph_index": {"type": ["integer", "null"]},
+        "page_hint": {"type": ["integer", "null"]},
+        "confidence": {"type": "number"},
+        "requires_review": {"type": "boolean"}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["title_cn", "student_name", "student_id", "college", "major", "advisor", "date", "unit_code"],
+      "properties": {
+        "title_cn": {"type": "string"},
+        "title_en": {"type": "string"},
+        "student_name": {"type": "string"},
+        "student_id": {"type": "string"},
+        "college": {"type": "string"},
+        "major": {"type": "string"},
+        "advisor": {"type": "string"},
+        "date": {"type": "string"},
+        "classification": {"type": "string"},
+        "unit_code": {"type": "string"},
+        "evidence": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/sourceEvidence"}
+        }
+      }
+    },
+    "contentBlock": {
+      "type": "object",
+      "required": ["id", "type", "title", "text", "level", "source"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "title": {"type": "string"},
+        "text": {"type": "string"},
+        "level": {"type": "integer"},
+        "source": {
+          "anyOf": [
+            {"$ref": "#/$defs/sourceEvidence"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "assetItem": {
+      "type": "object",
+      "required": ["id", "type", "path", "caption", "source", "requires_review"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "path": {"type": "string"},
+        "caption": {"type": "string"},
+        "source": {
+          "anyOf": [
+            {"$ref": "#/$defs/sourceEvidence"},
+            {"type": "null"}
+          ]
+        },
+        "requires_review": {"type": "boolean"}
+      }
+    },
+    "equationItem": {
+      "type": "object",
+      "required": ["id", "kind", "text", "number", "latex", "source", "requires_review"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "text": {"type": "string"},
+        "number": {"type": "string"},
+        "latex": {"type": "string"},
+        "source": {
+          "anyOf": [
+            {"$ref": "#/$defs/sourceEvidence"},
+            {"type": "null"}
+          ]
+        },
+        "requires_review": {"type": "boolean"}
+      }
+    }
+  }
+}

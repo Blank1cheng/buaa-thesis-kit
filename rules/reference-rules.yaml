@@ -1,0 +1,12 @@
+references:
+  section_anchors: ["参考文献"]
+  entry_pattern: "^\\s*\\[\\d+\\]"
+  require_terminal_period: true
+  citation_patterns:
+    - "\\[\\d+(?:[-,，]\\d+)*\\]"
+blocking:
+  - missing_references_section
+  - duplicate_reference_number
+  - citation_without_reference
+manual_review:
+  - non_gbt_7714_entry

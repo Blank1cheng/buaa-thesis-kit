@@ -1,0 +1,419 @@
+from __future__ import annotations
+
+import re
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from buaa_thesis_kit.docx_extract import extract_thesis_model
+from buaa_thesis_kit.models import ThesisModel
+from buaa_thesis_kit.pdf_extract import extract_pdf_model
+from buaa_thesis_kit.pdf_export import export_pdf_from_docx
+from buaa_thesis_kit.template_fill import fill_word_template
+from buaa_thesis_kit.tex_gen import generate_tex
+from buaa_thesis_kit.validate import (
+    PROCESS_FILE_NAMES,
+    PROCESS_FILE_SUFFIXES,
+    build_report,
+    validate_clean_output,
+    write_report_md,
+)
+from buaa_thesis_kit.word_convert import convert_doc_to_docx
+
+
+DEFAULT_DOCX_TEMPLATE = (
+    Path(__file__).resolve().parents[1] / "templates" / "buaa_undergraduate_thesis_template.docx"
+)
+PUBLIC_OUTPUT_STATUSES = {
+    "thesis.docx": "missing",
+    "thesis.pdf": "missing",
+    "thesis.tex": "missing",
+    "report.md": "pass",
+    "image": "missing",
+}
+
+
+def run_pipeline(
+    source: Path,
+    output_dir: Path,
+    template_path: Path | None = None,
+    keep_work: bool = False,
+) -> dict[str, Any]:
+    """Run the Phase 1 BUAA thesis conversion pipeline."""
+    source_path = Path(source).expanduser().resolve(strict=False)
+    output_root = _prepare_output_dir(Path(output_dir), source_path)
+    image_dir = output_root / "image"
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    outputs = dict(PUBLIC_OUTPUT_STATUSES)
+    outputs["image"] = "pass"
+    blocking_items: list[str] = []
+    manual_review: list[str] = []
+    notes: list[str] = []
+    model = ThesisModel()
+    work_dir: Path | None = None
+    remove_work = False
+
+    try:
+        source_suffix = source_path.suffix.lower()
+        if source_suffix not in {".doc", ".docx", ".pdf"}:
+            blocking_items.append(
+                f"Supported input types are DOC, DOCX, and PDF; unsupported source: {source_path.name}"
+            )
+            return _finalize_report(
+                source_path,
+                output_root,
+                outputs,
+                _summary(model),
+                blocking_items,
+                manual_review,
+                notes,
+            )
+
+        work_dir, remove_work = _prepare_work_dir(output_root, keep_work)
+        if keep_work:
+            notes.append(f"Work directory retained: {work_dir}")
+
+        extraction_source = source_path
+        if source_suffix == ".doc":
+            converted_source = work_dir / "source.docx"
+            conversion_ok, conversion_message = convert_doc_to_docx(source_path, converted_source)
+            if conversion_ok:
+                extraction_source = converted_source
+                source_suffix = ".docx"
+                notes.append(conversion_message)
+            else:
+                blocking_items.append(f"DOC conversion blocking: {conversion_message}")
+                return _finalize_report(
+                    source_path,
+                    output_root,
+                    outputs,
+                    _summary(model),
+                    blocking_items,
+                    manual_review,
+                    notes,
+                )
+
+        try:
+            if source_suffix == ".docx":
+                model = extract_thesis_model(extraction_source, work_dir)
+            else:
+                model = extract_pdf_model(extraction_source, work_dir)
+        except Exception as exc:  # python-docx/ZIP/XML failures are reported, not leaked.
+            model = ThesisModel(status="failed")
+            model.extraction_warnings.append(f"extraction failed unexpectedly: {exc}")
+
+        if model.status == "failed":
+            blocking_items.append(_model_failed_message(model))
+            return _finalize_report(
+                source_path,
+                output_root,
+                outputs,
+                _summary(model),
+                blocking_items,
+                manual_review,
+                notes,
+            )
+
+        notes.extend(_copy_final_figure_assets(model, image_dir))
+
+        thesis_docx = output_root / "thesis.docx"
+        word_template = Path(template_path) if template_path is not None else DEFAULT_DOCX_TEMPLATE
+        try:
+            fill_word_template(word_template, model, thesis_docx)
+            outputs["thesis.docx"] = _file_status(thesis_docx)
+        except Exception as exc:
+            outputs["thesis.docx"] = "failed"
+            blocking_items.append(f"Word DOCX generation failed: {exc}")
+
+        thesis_tex = output_root / "thesis.tex"
+        tex_needs_review = False
+        try:
+            generate_tex(model, thesis_tex, image_root=image_dir)
+            tex_needs_review = _tex_contains_review_markers(thesis_tex)
+            outputs["thesis.tex"] = "needs_review" if tex_needs_review else _file_status(thesis_tex)
+        except Exception as exc:
+            outputs["thesis.tex"] = "failed"
+            blocking_items.append(f"TeX generation failed: {exc}")
+
+        thesis_pdf = output_root / "thesis.pdf"
+        if outputs["thesis.docx"] in {"pass", "needs_review"}:
+            pdf_ok, pdf_message = export_pdf_from_docx(thesis_docx, thesis_pdf)
+            if pdf_ok:
+                outputs["thesis.pdf"] = "pass"
+                notes.append(pdf_message)
+            else:
+                outputs["thesis.pdf"] = "failed"
+                blocking_items.append(f"PDF export blocking: {pdf_message}")
+        else:
+            outputs["thesis.pdf"] = "failed"
+            blocking_items.append("PDF export skipped: thesis.docx was not generated successfully.")
+
+        manual_review.extend(_manual_review_items(model, tex_needs_review))
+
+        return _finalize_report(
+            source_path,
+            output_root,
+            outputs,
+            _summary(model),
+            blocking_items,
+            manual_review,
+            notes,
+        )
+    finally:
+        if work_dir is not None and remove_work:
+            _remove_work_dir(work_dir, output_root)
+
+
+def _prepare_output_dir(output_dir: Path, source_path: Path | None = None) -> Path:
+    root = output_dir.expanduser().resolve(strict=False)
+    _assert_safe_directory_target(root, source_path)
+    if root.exists() and not root.is_dir():
+        raise ValueError(f"Output path exists and is not a directory: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    for child in list(root.iterdir()):
+        _remove_child_inside_root(child, root)
+    return root
+
+
+def _assert_safe_directory_target(path: Path, source_path: Path | None = None) -> None:
+    anchor = Path(path.anchor).resolve(strict=False) if path.anchor else None
+    if anchor is not None and path == anchor:
+        raise ValueError(f"Refusing to clean filesystem root: {path}")
+    cwd = Path.cwd().resolve(strict=False)
+    if path == cwd:
+        raise ValueError(f"Refusing to clean current working directory: {path}")
+    if _is_relative_to(cwd, path):
+        raise ValueError(f"Refusing to clean directory that contains current workspace: {path}")
+    if source_path is not None and _is_relative_to(source_path, path):
+        raise ValueError(f"Refusing to clean output directory that contains source file: {path}")
+
+
+def _remove_child_inside_root(child: Path, root: Path) -> None:
+    root_resolved = root.resolve(strict=False)
+    if child.parent.resolve(strict=False) != root_resolved:
+        raise ValueError(f"Refusing to remove path outside output directory: {child}")
+
+    is_junction = getattr(child, "is_junction", lambda: False)()
+    if child.is_symlink():
+        child.unlink()
+    elif is_junction:
+        child.rmdir()
+    elif child.is_dir():
+        child_resolved = child.resolve(strict=False)
+        try:
+            child_resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ValueError(f"Refusing to recursively remove path outside output directory: {child}") from exc
+        shutil.rmtree(child)
+    else:
+        child.unlink()
+
+
+def _prepare_work_dir(output_root: Path, keep_work: bool) -> tuple[Path, bool]:
+    if keep_work:
+        work_dir = output_root.with_name(f"{output_root.name}_work")
+        _assert_adjacent_work_dir(work_dir, output_root)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        for child in list(work_dir.iterdir()):
+            _remove_child_inside_root(child, work_dir)
+        return work_dir, False
+
+    work_dir = Path(
+        tempfile.mkdtemp(prefix=f"{output_root.name}_work_", dir=str(output_root.parent))
+    ).resolve(strict=False)
+    _assert_adjacent_work_dir(work_dir, output_root)
+    return work_dir, True
+
+
+def _assert_adjacent_work_dir(work_dir: Path, output_root: Path) -> None:
+    if work_dir.resolve(strict=False) == output_root.resolve(strict=False):
+        raise ValueError("Work directory must not be the public output directory.")
+    if work_dir.resolve(strict=False).parent != output_root.resolve(strict=False).parent:
+        raise ValueError(f"Work directory must be adjacent to output directory: {work_dir}")
+    if not work_dir.name.startswith(f"{output_root.name}_work"):
+        raise ValueError(f"Unexpected work directory name: {work_dir}")
+
+
+def _remove_work_dir(work_dir: Path, output_root: Path) -> None:
+    _assert_adjacent_work_dir(work_dir, output_root)
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+
+
+def _copy_final_figure_assets(model: ThesisModel, image_dir: Path) -> list[str]:
+    notes: list[str] = []
+    used_names = {path.name for path in image_dir.iterdir()} if image_dir.exists() else set()
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    for figure in model.figures:
+        if not figure.path:
+            figure.requires_review = True
+            notes.append(f"Figure {figure.id} has no source image path.")
+            continue
+
+        source = Path(figure.path)
+        if not source.exists() or not source.is_file():
+            figure.requires_review = True
+            notes.append(f"Figure {figure.id} source image missing: {_safe_display_path(source)}")
+            continue
+
+        if _is_relative_to(source, image_dir):
+            figure.path = str(source.resolve(strict=False))
+            used_names.add(source.name)
+            continue
+
+        safe_name = _safe_asset_name(source.name)
+        if _is_process_filename(safe_name):
+            figure.requires_review = True
+            notes.append(f"Figure {figure.id} skipped process-like asset name: {safe_name}")
+            continue
+
+        destination = _unique_destination(image_dir, safe_name, used_names)
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            figure.requires_review = True
+            notes.append(f"Figure {figure.id} could not be copied to output/image: {exc}")
+            continue
+        figure.path = str(destination.resolve(strict=False))
+
+    return notes
+
+
+def _safe_asset_name(name: str) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name).strip("._")
+    return safe_name or "asset.bin"
+
+
+def _unique_destination(image_dir: Path, filename: str, used_names: set[str]) -> Path:
+    path = Path(filename)
+    stem = path.stem or "asset"
+    suffix = "".join(path.suffixes)
+    candidate = filename
+    counter = 2
+    while candidate in used_names or (image_dir / candidate).exists():
+        candidate = f"{stem}-{counter}{suffix}"
+        counter += 1
+    used_names.add(candidate)
+    return image_dir / candidate
+
+
+def _is_process_filename(filename: str) -> bool:
+    name = filename.lower()
+    return name in PROCESS_FILE_NAMES or any(name.endswith(suffix) for suffix in PROCESS_FILE_SUFFIXES)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
+
+
+def _safe_display_path(path: Path) -> str:
+    return Path(path).name or str(path)
+
+
+def _file_status(path: Path) -> str:
+    return "pass" if path.exists() and path.is_file() and path.stat().st_size > 0 else "failed"
+
+
+def _tex_contains_review_markers(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        return "% REVIEW:" in path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+
+
+def _summary(model: ThesisModel) -> dict[str, int]:
+    return {
+        "sections": len(model.sections),
+        "figures": len(model.figures),
+        "tables": len(model.tables),
+        "equations": len(model.equations),
+        "references": len(model.references),
+        "appendices": len(model.appendices),
+        "extraction_warnings": len(model.extraction_warnings),
+    }
+
+
+def _model_failed_message(model: ThesisModel) -> str:
+    details = "; ".join(model.extraction_warnings) if model.extraction_warnings else "no details"
+    return f"Extraction failed: {details}"
+
+
+def _manual_review_items(model: ThesisModel, tex_needs_review: bool) -> list[str]:
+    items: list[str] = []
+    items.extend(f"Extraction warning: {warning}" for warning in model.extraction_warnings)
+    if model.status == "needs_review":
+        items.append("Model status needs_review: extracted content requires manual review.")
+    for figure in model.figures:
+        if figure.requires_review:
+            label = Path(figure.path).name if figure.path else figure.id
+            items.append(f"Figure {figure.id} requires review: {label}")
+    for equation in model.equations:
+        if equation.requires_review:
+            items.append(f"Equation {equation.id} requires review: {equation.kind}")
+    if tex_needs_review:
+        items.append("TeX review status: needs_review; thesis.tex contains REVIEW markers.")
+    return items
+
+
+def _finalize_report(
+    source: Path,
+    output_root: Path,
+    outputs: dict[str, str],
+    summary: dict[str, int],
+    blocking_items: list[str],
+    manual_review: list[str],
+    notes: list[str],
+) -> dict[str, Any]:
+    report_path = output_root / "report.md"
+    report = build_report(
+        source=str(source),
+        outputs=outputs,
+        summary=summary,
+        blocking_items=_dedupe(blocking_items),
+        manual_review=_dedupe(manual_review),
+        notes=_dedupe(notes),
+    )
+    write_report_md(report, report_path)
+
+    clean_ok, clean_messages = validate_clean_output(output_root)
+    final_blocking = list(blocking_items)
+    final_notes = list(notes)
+    if clean_ok:
+        final_notes.append("Clean output validation passed.")
+    else:
+        final_blocking.extend(
+            f"Clean output validation failed: {message}" for message in clean_messages
+        )
+
+    final_report = build_report(
+        source=str(source),
+        outputs=outputs,
+        summary=summary,
+        blocking_items=_dedupe(final_blocking),
+        manual_review=_dedupe(manual_review),
+        notes=_dedupe(final_notes),
+    )
+    write_report_md(final_report, report_path)
+    return final_report
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
+__all__ = ["run_pipeline"]

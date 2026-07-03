@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["title_cn", "student_name", "student_id", "college", "major", "advisor", "date", "unit_code"],
+  "properties": {
+    "title_cn": {"type": "string"},
+    "title_en": {"type": "string"},
+    "student_name": {"type": "string"},
+    "student_id": {"type": "string"},
+    "college": {"type": "string"},
+    "major": {"type": "string"},
+    "advisor": {"type": "string"},
+    "date": {"type": "string"},
+    "classification": {"type": "string"},
+    "unit_code": {"type": "string"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/sourceEvidence"}
+    }
+  },
+  "$defs": {
+    "sourceEvidence": {
+      "type": "object",
+      "required": ["file", "method", "confidence", "requires_review"],
+      "properties": {
+        "file": {"type": "string"},
+        "method": {"type": "string"},
+        "paragraph_index": {"type": ["integer", "null"]},
+        "page_hint": {"type": ["integer", "null"]},
+        "confidence": {"type": "number"},
+        "requires_review": {"type": "boolean"}
+      }
+    }
+  }
+}

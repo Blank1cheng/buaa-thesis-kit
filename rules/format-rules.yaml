@@ -1,0 +1,21 @@
+page:
+  paper: A4
+  margins_mm:
+    top: 30
+    bottom: 25
+    left: 30
+    right: 20
+  line_spacing: 1.5
+fonts:
+  body_cn: SimSun
+  heading_cn: SimHei
+  latin: Times New Roman
+sizes_pt:
+  title: 22
+  chapter: 16
+  section: 12
+  body: 12
+  caption: 10.5
+page_numbering:
+  front_matter: roman
+  body: arabic

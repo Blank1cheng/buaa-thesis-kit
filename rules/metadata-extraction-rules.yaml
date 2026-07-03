@@ -1,0 +1,47 @@
+metadata_fields:
+  title_cn:
+    labels: ["毕业设计(论文)", "毕业设计（论文）题目", "论文题目"]
+    priority: ["cover", "task_book", "abstract_cn", "filename"]
+    required: true
+  title_en:
+    labels: ["Title", "Research on", "Study on"]
+    priority: ["abstract_en", "cover", "filename"]
+    required: false
+  student_name:
+    labels: ["学生姓名", "学生", "作者", "Author"]
+    priority: ["cover", "abstract_cn", "task_book", "filename"]
+    required: true
+  student_id:
+    labels: ["学号"]
+    pattern: "\\d{8,10}"
+    priority: ["cover", "filename"]
+    required: true
+  college:
+    labels: ["学院名称", "院（系）名称", "学院（系）"]
+    priority: ["cover", "task_book"]
+    required: true
+  major:
+    labels: ["专业名称", "专业"]
+    priority: ["cover", "task_book"]
+    required: true
+  advisor:
+    labels: ["指导教师", "指导老师", "Tutor"]
+    priority: ["cover", "abstract_cn", "abstract_en", "task_book"]
+    required: true
+  date:
+    labels: ["年", "月"]
+    pattern: "\\d{4}\\s*年\\s*\\d{1,2}\\s*月"
+    priority: ["cover", "declaration"]
+    required: true
+  classification:
+    labels: ["分类号"]
+    priority: ["cover"]
+    required: false
+  unit_code:
+    labels: ["单位代码"]
+    default: "10006"
+    required: true
+confidence:
+  high: 0.9
+  medium: 0.65
+  low: 0.35

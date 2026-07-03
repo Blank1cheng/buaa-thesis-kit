@@ -1,0 +1,64 @@
+\documentclass[UTF8,a4paper,12pt]{ctexrep}
+\usepackage{geometry}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+
+\geometry{top=30mm,bottom=25mm,left=30mm,right=20mm}
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
+\IfFontExistsTF{SimSun}{\setCJKmainfont{SimSun}}{}
+\IfFontExistsTF{SimHei}{\setCJKsansfont{SimHei}}{}
+\graphicspath{{image/}{output/image/}}
+
+\captionsetup[figure]{font=small,labelfont=normalfont,position=bottom,labelsep=space}
+\captionsetup[table]{font=small,labelfont=bf,position=top,labelsep=space}
+\hypersetup{hidelinks}
+
+\newcommand{\BUAACoverTitle}[1]{%
+  \begin{titlepage}
+  \centering
+  {\zihao{2}\heiti 北京航空航天大学本科毕业设计（论文）\par}
+  \vspace{18mm}
+  {\zihao{3}\heiti #1\par}
+  \vfill
+  \end{titlepage}
+}
+
+\newcommand{\BUAACoverInfoField}[2]{%
+  \par\noindent\makebox[30mm][r]{#1：}\underline{\makebox[90mm][c]{#2}}\par
+}
+
+\newcommand{\BUAAChineseAbstract}[4]{%
+  \chapter*{摘\quad 要}
+  \addcontentsline{toc}{chapter}{摘要}
+  \noindent 学生：#1\quad 指导教师：#2\par
+  \vspace{\baselineskip}
+  #3\par
+  \vspace{\baselineskip}
+  \noindent{\heiti 关键词：}#4\par
+}
+
+\newcommand{\BUAAEnglishAbstract}[4]{%
+  \chapter*{Abstract}
+  \addcontentsline{toc}{chapter}{Abstract}
+  \noindent Author: #1\quad Supervisor: #2\par
+  \vspace{\baselineskip}
+  #3\par
+  \vspace{\baselineskip}
+  \noindent\textbf{Key Words: }#4\par
+}
+
+\newcommand{\BUAATableOfContents}{%
+  \clearpage
+  \tableofcontents
+  \clearpage
+}
+
+\begin{document}
+% 使用 Word 作为权威排版源；本 TeX 文件作为结构化备份模板。
+% 图片相对路径采用 output/image 或同目录 image。
+CONTENT_PLACEHOLDER
+\end{document}

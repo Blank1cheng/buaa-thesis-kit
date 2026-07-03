@@ -1,0 +1,22 @@
+equations:
+  numbering_style: "(chapter-index)"
+  accepted_sources:
+    - omml
+    - mathtype_ole
+    - equation_editor
+    - image_equation
+    - plain_text
+  field_markers:
+    - "SEQ MTEqn"
+    - "MTPlaceRef"
+    - "Equation.DSMT4"
+manual_review:
+  - mathtype_ole
+  - image_equation
+  - multi_equation_same_paragraph
+  - missing_number
+  - duplicate_number
+blocking:
+  - unreadable_equation_object
+  - conflicting_equation_number
+  - missing_referenced_equation

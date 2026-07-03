@@ -1,0 +1,7 @@
+python-docx
+lxml
+pypdf
+PyMuPDF
+pytest
+jsonschema
+pyyaml

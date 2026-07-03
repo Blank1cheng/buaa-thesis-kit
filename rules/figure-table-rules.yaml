@@ -1,0 +1,15 @@
+figures:
+  caption_position: below
+  numbering: chapter
+  body_caption_patterns: ["^图\\s*\\d+[-.]\\d+", "^图\\s*\\d+"]
+  layout_artifact_contexts: ["cover", "header", "footer", "spine"]
+tables:
+  caption_position: above
+  numbering: chapter
+  caption_patterns: ["^表\\s*\\d+[-.]\\d+", "^表\\s*\\d+"]
+manual_review:
+  - unmatched_caption
+  - broken_image
+  - empty_table
+  - merged_cells
+  - image_based_table

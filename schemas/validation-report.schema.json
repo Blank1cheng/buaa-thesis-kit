@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "source", "outputs", "blocking_items", "manual_review"],
+  "properties": {
+    "status": {"enum": ["pass", "needs_review", "failed"]},
+    "source": {"type": "string"},
+    "outputs": {"type": "object"},
+    "summary": {"type": "object"},
+    "blocking_items": {"type": "array", "items": {"type": "string"}},
+    "manual_review": {"type": "array", "items": {"type": "string"}},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}
