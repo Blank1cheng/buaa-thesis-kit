@@ -125,6 +125,7 @@ def visual_compare(state: GraphState) -> NodeResult:
             source_kind=state.source_kind,
             require_spine=True,
             required_body_snippets=_source_body_snippets(state.model),
+            expected_omml_equation_count=_expected_omml_equation_count(state.model),
         )
         state.editability = dict(inspection.editability)
         for item in inspection.blocking_items:
@@ -200,6 +201,10 @@ def _source_body_snippets(model: ThesisModel) -> list[str]:
             if len(snippets) >= 8:
                 return snippets
     return snippets
+
+
+def _expected_omml_equation_count(model: ThesisModel) -> int:
+    return sum(1 for equation in model.equations if equation.omml.strip())
 
 
 def _append_spine_page(document, metadata: Metadata) -> None:

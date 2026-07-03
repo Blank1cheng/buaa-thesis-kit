@@ -5,13 +5,18 @@ import fitz
 from docx import Document
 from pypdf import PdfWriter
 
-from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
+from buaa_thesis_kit.models import ContentBlock, EquationItem, Metadata, ThesisModel
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "templates" / "buaa_undergraduate_thesis_template.docx"
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+OMML_FRAGMENT = (
+    '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+    "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
+    "</m:oMathPara>"
 )
 
 
@@ -316,6 +321,54 @@ def test_visual_compare_blocks_pdf_word_without_editable_text(tmp_path):
 
     assert result.next_node == "decide"
     assert any("editable_text_missing" in item for item in state.blocking_items)
+
+
+def test_visual_compare_blocks_when_expected_omml_equation_is_not_in_word(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import visual_compare
+
+    output = tmp_path / "output"
+    work = tmp_path / "work"
+    source = tmp_path / "source.pdf"
+    authoritative = tmp_path / "missing-omml.docx"
+    _write_valid_pdf(source)
+
+    document = Document()
+    document.add_paragraph("Equation Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("Book Spine")
+    document.add_paragraph("Editable body text that must be preserved.")
+    document.add_paragraph("x + y")
+    document.save(authoritative)
+
+    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state.source_kind = "pdf"
+    state.authoritative_docx = authoritative
+    state.model = ThesisModel(
+        metadata=Metadata(title_cn="Equation Thesis", student_id="20370001"),
+        sections=[
+            ContentBlock(
+                id="sec-1",
+                type="chapter",
+                text="Editable body text that must be preserved.",
+                level=1,
+            )
+        ],
+        equations=[
+            EquationItem(
+                id="eq-1",
+                kind="pdf-text-equation",
+                text="x+y",
+                omml=OMML_FRAGMENT,
+                requires_review=False,
+            )
+        ],
+    )
+
+    result = visual_compare(state)
+
+    assert result.next_node == "decide"
+    assert any("editable_omml_equation_missing" in item for item in state.blocking_items)
 
 
 def test_visual_compare_blocks_collapsed_exported_pdf_front_matter(tmp_path):

@@ -74,7 +74,9 @@ PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只�
 不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count`、`drawing_count`
 和 `omml_equation_count` 用于辅助判断正文、表格、图像和公式是否以可编辑 Word 结构输出。`body_snippet_count`
 和 `body_snippet_hits` 记录从源正文抽样出的文本片段是否能在最终 Word 中以可编辑文本命中；
-若源正文片段完全未命中，说明正文可能被图片替代，必须阻断。
+若源正文片段完全未命中，说明正文可能被图片替代，必须阻断。若模型中已有可转换的 OMML 公式，
+`expected_omml_equation_count` 必须小于等于最终 DOCX 包内真实 `m:oMath`/`m:oMathPara` 对象数量，
+否则视为公式被文本、截图或占位符替代并阻断。
 
 ## 封面几何验收
 
@@ -101,7 +103,8 @@ Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
 `sum`/`int`、Greek、`bmatrix`/`pmatrix`/`cases`
 宏，只有在解析器能够完整转换为 OMML 时才标记为 `editable_omml`；`latex_needs_review` 表示公式样式文本已经进入账本但仍需要复核并
 转换为可编辑 Word 公式。`preview_image_needs_review` 和 `manual_transcription_required` 不能静默通过，
-必须由 agent 或人工转写成可编辑公式后再进入最终验收。
+必须由 agent 或人工转写成可编辑公式后再进入最终验收。`editable_omml` 不是账本文字声明，
+最终验收会打开 DOCX 包检查真实 OMML 对象数量。
 
 ## 图表一致性验收
 

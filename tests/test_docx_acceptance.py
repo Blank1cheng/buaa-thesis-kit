@@ -142,6 +142,26 @@ def test_inspect_docx_output_blocks_internal_equation_object_token(tmp_path):
     assert any("editable_equation_object_token_visible" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_when_expected_omml_equation_is_missing(tmp_path):
+    output = tmp_path / "missing-omml-equation.docx"
+    document = Document()
+    document.add_paragraph("Equation Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("Book Spine")
+    document.add_paragraph("x + y")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Equation Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=True,
+        expected_omml_equation_count=1,
+    )
+
+    assert any("editable_omml_equation_missing" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     output = tmp_path / "editable.docx"
     model = ThesisModel(
@@ -211,6 +231,7 @@ def test_inspect_docx_output_reports_editable_omml_equation_count(tmp_path):
         model.metadata,
         source_kind="docx",
         require_spine=True,
+        expected_omml_equation_count=1,
     )
 
     assert result.blocking_items == []

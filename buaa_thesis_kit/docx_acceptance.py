@@ -37,6 +37,7 @@ def inspect_docx_output(
     source_kind: str,
     require_spine: bool,
     required_body_snippets: Iterable[str] | None = None,
+    expected_omml_equation_count: int = 0,
 ) -> DocxOutputInspection:
     """Check hard acceptance gates for an authoritative, editable Word output."""
     result = DocxOutputInspection()
@@ -64,6 +65,7 @@ def inspect_docx_output(
         "drawing_count": package_info["drawing_count"],
         "page_screenshot_drawing_count": package_info["page_screenshot_drawing_count"],
         "omml_equation_count": package_info["omml_equation_count"],
+        "expected_omml_equation_count": max(0, expected_omml_equation_count),
         "media_count": package_info["media_count"],
         "body_snippet_count": len(body_snippets),
         "body_snippet_hits": body_snippet_hits,
@@ -101,6 +103,14 @@ def inspect_docx_output(
     if "[Equation preview inserted]" in visible_text:
         result.blocking_items.append(
             "editable_equation_missing: equation preview image was inserted instead of an editable Word/OMML/OLE equation object."
+        )
+
+    expected_omml = max(0, expected_omml_equation_count)
+    actual_omml = package_info["omml_equation_count"]
+    if expected_omml and actual_omml < expected_omml:
+        result.blocking_items.append(
+            "editable_omml_equation_missing: expected "
+            f"{expected_omml} editable OMML equation object(s), found {actual_omml}."
         )
 
     if "__BUAA_EDITABLE_EQUATION_OBJECT__" in visible_text:
