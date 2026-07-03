@@ -451,6 +451,18 @@ def test_cli_main_prints_json_and_returns_status_based_exit_codes(tmp_path, monk
     assert fail_payload["status"] == "failed"
 
 
+def test_cli_help_describes_supported_source_types(capsys):
+    import scripts.run_pipeline as cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--help"])
+
+    output = capsys.readouterr().out
+    assert exc_info.value.code == 0
+    assert "DOC, DOCX, or PDF" in output
+    assert "--strict" in output
+
+
 def test_cli_strict_mode_returns_failure_for_needs_review(tmp_path, monkeypatch, capsys):
     import buaa_thesis_kit.pipeline as pipeline
     import scripts.run_pipeline as cli

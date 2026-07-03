@@ -19,3 +19,9 @@
 ## 5. 最终交付
 
 只公开以下路径：`output/thesis.docx`、`output/thesis.pdf`、`output/thesis.tex`、`output/report.md`、`output/image/`。交付前检查 DOCX 可打开、PDF 来自最新 Word、TeX 无乱码、图片路径有效、报告无空白占位。
+
+## 6. Editability Audit and strict finalization
+
+Every run must preserve `output/thesis.docx` as the authoritative editable Word document. Agents must inspect the `Editability Audit` section in `output/report.md` before claiming a PDF-derived Word file is usable. For a PDF input, `page_screenshot_drawing_count` must be `0`; page renders may exist only as OCR or manual-review evidence, not as final Word body pages.
+
+Use `--strict` for final submission checks. In strict finalization mode, any manual-review item or `needs_review` output must produce `strict_finalization_failed`, and the CLI must exit non-zero. Non-strict mode may still emit `needs_review` so reviewers can inspect editable Word, PDF, TeX, and image outputs.

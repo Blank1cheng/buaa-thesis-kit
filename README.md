@@ -60,9 +60,19 @@ python scripts/run_pipeline.py input.docx --out output
 python scripts/run_pipeline.py input.doc --out output
 python scripts/run_pipeline.py input.pdf --out output
 python scripts/run_pipeline.py input.docx --out output --keep-work
+python scripts/run_pipeline.py input.pdf --out output --strict
 ```
 
 `--keep-work` 只用于调试，会保留与 `output/` 相邻的过程目录；默认运行会删除过程文件。
+`--strict` 用于最终提交门禁：只要仍存在人工复核项或 `needs_review` 输出，就会生成
+`strict_finalization_failed` 并返回非零退出码。
+
+## 可编辑性验收
+
+`output/report.md` 中的 `Editability Audit` 是判断 `thesis.docx` 是否可编辑的机器证据。
+PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只能作为 OCR 或人工复核证据，
+不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count` 和
+`drawing_count` 用于辅助判断正文、表格和图像是否以可编辑 Word 结构输出。
 
 ## 报告状态
 

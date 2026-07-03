@@ -15,7 +15,7 @@ from buaa_thesis_kit.pipeline import run_pipeline  # noqa: E402
 
 def main(args: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the BUAA thesis Phase 1 pipeline.")
-    parser.add_argument("source", type=Path, help="Source thesis DOCX file.")
+    parser.add_argument("source", type=Path, help="Source thesis DOC, DOCX, or PDF file.")
     parser.add_argument("--out", required=True, type=Path, help="Public output directory.")
     parser.add_argument("--template", type=Path, default=None, help="Optional Word DOCX template.")
     parser.add_argument(

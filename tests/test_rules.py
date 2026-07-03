@@ -117,3 +117,18 @@ def test_decision_policy_exists_and_defines_statuses():
     assert "`pass`" in policy
     assert "`needs_review`" in policy
     assert "`failed`" in policy
+
+
+def test_agent_workflow_documents_editability_and_strict_finalization():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+    roadmap = (root / "references" / "phase-2-roadmap.md").read_text(encoding="utf-8")
+
+    assert "Editability Audit" in readme
+    assert "--strict" in readme
+    assert "Editability Audit" in workflow
+    assert "page_screenshot_drawing_count" in workflow
+    assert "--strict" in workflow
+    assert "strict_finalization_failed" in workflow
+    assert "strict finalization mode" in roadmap
