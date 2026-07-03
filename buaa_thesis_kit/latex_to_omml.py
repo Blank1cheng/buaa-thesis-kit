@@ -5,7 +5,7 @@ from xml.sax.saxutils import escape
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
-SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_{}\s+\-*/=().,<>^]+$")
+SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_{}\\\s+\-*/=().,<>^]+$")
 
 
 def latex_to_omml(latex: str) -> str:
@@ -16,7 +16,7 @@ def latex_to_omml(latex: str) -> str:
     producing incorrect editable math.
     """
     source = str(latex or "").strip()
-    if not source or "\\" in source or not SAFE_TEXT_RE.fullmatch(source):
+    if not source or not SAFE_TEXT_RE.fullmatch(source):
         return ""
 
     parser = _LinearMathParser(source)
@@ -32,11 +32,22 @@ class _LinearMathParser:
         self.index = 0
 
     def parse(self) -> str:
+        return self._parse_sequence()
+
+    def _parse_sequence(self, stop_char: str = "") -> str:
         parts: list[str] = []
         while self.index < len(self.source):
             char = self.source[self.index]
+            if stop_char and char == stop_char:
+                break
             if char.isspace():
                 self.index += 1
+                continue
+            if char == "\\":
+                atom = self._parse_macro()
+                if not atom:
+                    return ""
+                parts.append(atom)
                 continue
             if _is_operator_char(char):
                 parts.append(_run(char))
@@ -53,6 +64,35 @@ class _LinearMathParser:
                 continue
             return ""
         return "".join(parts)
+
+    def _parse_macro(self) -> str:
+        self.index += 1
+        start = self.index
+        while self.index < len(self.source) and self.source[self.index].isalpha():
+            self.index += 1
+        name = self.source[start : self.index]
+        if name == "frac":
+            numerator = self._parse_required_group()
+            denominator = self._parse_required_group()
+            if not numerator or not denominator:
+                return ""
+            return _fraction(numerator, denominator)
+        if name == "sqrt":
+            radicand = self._parse_required_group()
+            if not radicand:
+                return ""
+            return _radical(radicand)
+        return ""
+
+    def _parse_required_group(self) -> str:
+        if self._peek() != "{":
+            return ""
+        self.index += 1
+        body = self._parse_sequence(stop_char="}")
+        if not body or self._peek() != "}":
+            return ""
+        self.index += 1
+        return body
 
     def _parse_identifier(self) -> str:
         base = self._consume_identifier()
@@ -100,7 +140,7 @@ class _LinearMathParser:
 
     def _consume_script_value(self) -> str:
         if self._peek() == "{":
-            end = self.source.find("}", self.index + 1)
+            end = _find_simple_group_end(self.source, self.index)
             if end < 0:
                 return ""
             value = self.source[self.index + 1 : end].strip()
@@ -130,6 +170,14 @@ def _subscript(base: str, subscript: str) -> str:
     return f"<m:sSub><m:e>{base}</m:e><m:sub>{subscript}</m:sub></m:sSub>"
 
 
+def _fraction(numerator: str, denominator: str) -> str:
+    return f"<m:f><m:num>{numerator}</m:num><m:den>{denominator}</m:den></m:f>"
+
+
+def _radical(radicand: str) -> str:
+    return f"<m:rad><m:deg/><m:e>{radicand}</m:e></m:rad>"
+
+
 def _superscript(base: str, superscript: str) -> str:
     return f"<m:sSup><m:e>{base}</m:e><m:sup>{superscript}</m:sup></m:sSup>"
 
@@ -143,6 +191,19 @@ def _subscript_superscript(base: str, subscript: str, superscript: str) -> str:
 
 def _is_operator_char(char: str) -> bool:
     return char in "+-*/=(),<>"
+
+
+def _find_simple_group_end(source: str, start: int) -> int:
+    depth = 0
+    for index in range(start, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
 
 
 __all__ = ["latex_to_omml"]

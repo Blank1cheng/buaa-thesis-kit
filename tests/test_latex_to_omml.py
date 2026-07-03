@@ -22,5 +22,17 @@ def test_latex_to_omml_converts_safe_subscript_superscript_equation():
     assert "<m:t>2</m:t>" in omml
 
 
+def test_latex_to_omml_converts_fraction_and_square_root_macros():
+    omml = latex_to_omml(r"y = \frac{x_k}{\sqrt{n}}")
+
+    assert "<m:oMathPara" in omml
+    assert "<m:f>" in omml
+    assert "<m:num>" in omml
+    assert "<m:den>" in omml
+    assert "<m:rad>" in omml
+    assert "<m:sSub>" in omml
+    assert "<m:t>n</m:t>" in omml
+
+
 def test_latex_to_omml_rejects_unsupported_latex_macros():
-    assert latex_to_omml(r"x = \frac{a}{b}") == ""
+    assert latex_to_omml(r"x = \sum_{i=1}^{n} i") == ""

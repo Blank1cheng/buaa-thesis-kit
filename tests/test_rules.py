@@ -159,6 +159,8 @@ def test_agent_workflow_documents_equation_ledger():
         assert "editable_omml" in text
         assert "editable_ole_object" in text
         assert "safe linear" in text
+        assert "frac" in text
+        assert "sqrt" in text
         assert "latex_needs_review" in text
         assert "preview_image_needs_review" in text
 

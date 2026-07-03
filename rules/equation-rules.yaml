@@ -11,6 +11,9 @@ equations:
     - "SEQ MTEqn"
     - "MTPlaceRef"
     - "Equation.DSMT4"
+  supported_latex_macros:
+    - frac
+    - sqrt
 manual_review:
   - mathtype_ole
   - image_equation
