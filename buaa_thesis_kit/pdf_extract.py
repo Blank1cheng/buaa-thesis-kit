@@ -82,7 +82,11 @@ FIGURE_CAPTION_RE = re.compile(
     flags=re.IGNORECASE,
 )
 TABLE_CAPTION_RE = re.compile(
-    "^(?:(?:\u8868)\\s*\\d+(?:[.\\-]\\d+)*|table\\s+\\d+(?:[.\\-]\\d+)*)\\s+.+",
+    r"^(?:(?:\u8868)\s*\d+(?:[.\-]\d+)*|table\s+\d+(?:[.\-]\d+)*)(?:\s+.+)?$",
+    flags=re.IGNORECASE,
+)
+TABLE_NUMBER_RE = re.compile(
+    r"(?:\u8868|table)\s*(\d+(?:[.\-]\d+)*)",
     flags=re.IGNORECASE,
 )
 MIN_DISPLAY_IMAGE_AREA = 5_000.0
@@ -818,16 +822,20 @@ def _extract_tables_from_sections(sections: list[ContentBlock]) -> tuple[list[Co
                 table_rows.append(_normalize_table_row(lines[cursor]))
                 cursor += 1
 
+            title = line
             if len(table_rows) < 2:
-                kept_lines.append(lines[index])
-                index += 1
-                continue
+                stacked_table = _stacked_table_after_caption(lines, index)
+                if stacked_table is None:
+                    kept_lines.append(lines[index])
+                    index += 1
+                    continue
+                title, table_rows, cursor = stacked_table
 
             tables.append(
                 ContentBlock(
                     id=f"pdf-table-{len(tables) + 1}",
                     type="table",
-                    title=line,
+                    title=title,
                     text="\n".join(table_rows),
                     level=section.level,
                     source=_table_source(section),
@@ -850,6 +858,73 @@ def _extract_tables_from_sections(sections: list[ContentBlock]) -> tuple[list[Co
 
 def _is_table_caption(text: str) -> bool:
     return bool(TABLE_CAPTION_RE.match(str(text or "").strip()))
+
+
+def _stacked_table_after_caption(
+    lines: list[str],
+    caption_index: int,
+) -> tuple[str, list[str], int] | None:
+    caption = str(lines[caption_index]).strip()
+    table_number = _table_number(caption)
+    title_parts: list[str] = []
+    rows: list[str] = []
+    cursor = caption_index + 1
+
+    if cursor < len(lines) and _is_stacked_table_title_line(lines[cursor]):
+        title_parts.append(str(lines[cursor]).strip())
+        cursor += 1
+
+    while cursor < len(lines):
+        line = str(lines[cursor]).strip()
+        if not line:
+            break
+        if _is_table_caption(line) or FIGURE_CAPTION_RE.match(line) or _looks_like_heading(line):
+            break
+        if rows and table_number and _contains_inline_table_reference(line, table_number):
+            break
+        if len(rows) >= 2 and _looks_like_post_table_narrative(line):
+            break
+        rows.append(line)
+        cursor += 1
+
+    if len(rows) < 2:
+        return None
+
+    title = " ".join([caption, *title_parts]).strip()
+    return title, rows, cursor
+
+
+def _is_stacked_table_title_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or _is_table_caption(value) or FIGURE_CAPTION_RE.match(value):
+        return False
+    if _looks_like_heading(value):
+        return False
+    return len(value) <= 50
+
+
+def _contains_inline_table_reference(text: str, table_number: str) -> bool:
+    if _is_table_caption(text):
+        return False
+    return any(_normalize_table_number(match.group(1)) == table_number for match in TABLE_NUMBER_RE.finditer(text))
+
+
+def _looks_like_post_table_narrative(text: str) -> bool:
+    value = str(text or "").strip()
+    if len(value) < 32:
+        return False
+    return any(mark in value for mark in ("。", "，", ",", "."))
+
+
+def _table_number(text: str) -> str:
+    match = TABLE_NUMBER_RE.search(str(text or ""))
+    if not match:
+        return ""
+    return _normalize_table_number(match.group(1))
+
+
+def _normalize_table_number(value: str) -> str:
+    return str(value or "").strip().replace("-", ".")
 
 
 def _is_tabular_text_line(text: str) -> bool:

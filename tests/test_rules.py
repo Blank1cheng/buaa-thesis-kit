@@ -171,3 +171,14 @@ def test_agent_workflow_documents_cover_geometry_audit():
         assert "cover_title_y" in text
         assert "field_rows_y" in text
         assert "date_y" in text
+
+
+def test_agent_workflow_documents_figure_table_consistency():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "figure/table validation" in text
+        assert "figure_caption_without_asset" in text
+        assert "duplicate_figure_number" in text

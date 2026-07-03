@@ -37,3 +37,7 @@ For scanned PDF pages or pages with no extractable text, the pipeline must rende
 ## 9. Equation Ledger
 
 Every run must write an `Equation Ledger` entry for each detected equation. `editable_omml` and `editable_ole_object` may remain in the final Word because they are editable Word/OLE objects. `trusted_latex` may be regenerated as editable math only when the extractor marks it trusted. `preview_image_needs_review` and `manual_transcription_required` are not compliant final states; agents must convert them to editable Word equations or keep the run in `needs_review`. Preview images may be copied to `output/image/` as evidence, but they must not be treated as editable equations.
+
+## 10. Figure/Table validation
+
+Every run must perform `figure/table validation` before acceptance. `figure_caption_without_asset`, `table_caption_without_asset`, `figure_reference_without_asset`, and `table_reference_without_asset` are blocking items because they indicate that a caption or body reference may have lost its editable image/table asset during template rendering. `duplicate_figure_number` and `duplicate_table_number` are also blocking items. Uncaptioned figure assets and untitled tables should remain in manual review until the caption/title can be reconciled.

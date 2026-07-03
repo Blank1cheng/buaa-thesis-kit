@@ -100,6 +100,13 @@ Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
 表示可由可信 LaTeX 结构恢复；`preview_image_needs_review` 和 `manual_transcription_required`
 不能静默通过，必须由 agent 或人工转写成可编辑公式后再进入最终验收。
 
+## 图表一致性验收
+
+流水线会执行 `figure/table validation`：正文中的图题、表题和正文引用必须能匹配到对应图像或表格资产。
+`figure_caption_without_asset`、`table_caption_without_asset`、`figure_reference_without_asset`
+和 `table_reference_without_asset` 是阻断项，说明模板化输出可能漏图、漏表或错位。`duplicate_figure_number`
+和 `duplicate_table_number` 也是阻断项；无题注图片或无标题表格进入人工复核。
+
 ## 报告状态
 
 - `pass`：必需输出存在，且没有阻断项或人工复核项。

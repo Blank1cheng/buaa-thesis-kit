@@ -197,6 +197,42 @@ def test_extract_text_pdf_promotes_tabular_rows_to_editable_table(tmp_path):
     assert "Accuracy\t98%" not in combined_sections
 
 
+def test_extract_text_pdf_promotes_stacked_caption_table_to_editable_table(tmp_path):
+    source = tmp_path / "stacked-table.pdf"
+    work = tmp_path / "work"
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Stacked Table Thesis",
+                "Student ID: 20370001",
+                "1 Introduction",
+                "Table 2.1",
+                "FMECA table",
+                "Degradation mode",
+                "Affected parameter",
+                "Optical misalignment",
+                "Gyro bias",
+                "Table 2.1 analysis lists possible IMU degradation modes.",
+            ]
+        ),
+        fontsize=12,
+    )
+    document.save(source)
+    document.close()
+
+    model = extract_pdf_model(source, work)
+
+    assert len(model.tables) == 1
+    assert model.tables[0].title == "Table 2.1 FMECA table"
+    assert "Degradation mode" in model.tables[0].text
+    assert "Optical misalignment" in model.tables[0].text
+    combined_sections = "\n".join(section.text for section in model.sections)
+    assert "Table 2.1 analysis" in combined_sections
+
+
 def test_extract_metadata_recovers_vertical_cover_lines():
     texts = [
         "单位代码",
