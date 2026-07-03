@@ -180,6 +180,38 @@ def test_plan_minimal_fixes_promotes_missing_spine_to_repair_action(tmp_path):
     assert not state.blocking_items
 
 
+def test_diagnose_compliance_blocks_reference_citation_without_entry(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import diagnose_compliance
+
+    source = tmp_path / "source.docx"
+    work = tmp_path / "output_work"
+    output = tmp_path / "output"
+    _write_minimal_docx(source)
+    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state.source_features["has_spine"] = True
+    state.model = ThesisModel(
+        sections=[
+            ContentBlock(
+                id="sec-1",
+                type="chapter",
+                title="1 Introduction",
+                text="This paragraph cites [2].",
+                level=1,
+            )
+        ],
+        references=[
+            ContentBlock(id="ref-1", type="reference", text="[1] Wang. Flight control. 2026.")
+        ],
+        status="needs_review",
+    )
+
+    result = diagnose_compliance(state)
+
+    assert result.next_node == "plan_minimal_fixes"
+    assert "citation_without_reference: [2]" in state.blocking_items
+
+
 def test_apply_word_fixes_renders_docx_source_through_buaa_template(tmp_path):
     from buaa_thesis_kit.graph import GraphState
     from buaa_thesis_kit.graph_nodes import apply_word_fixes

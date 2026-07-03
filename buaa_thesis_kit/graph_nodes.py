@@ -9,6 +9,7 @@ from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata
 from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
+from buaa_thesis_kit.reference_acceptance import inspect_references
 from buaa_thesis_kit.template_fill import fill_word_template
 
 
@@ -29,6 +30,13 @@ def diagnose_compliance(state: GraphState) -> NodeResult:
 
     if not state.source_features.get("has_spine", False):
         _append_once(state.findings, "missing_spine")
+    reference_inspection = inspect_references(state.model)
+    for item in reference_inspection.blocking_items:
+        _append_once(state.blocking_items, item)
+    for item in reference_inspection.manual_review:
+        _append_once(state.manual_review, item)
+    for item in reference_inspection.notes:
+        _append_once(state.notes, item)
     return NodeResult(next_node="plan_minimal_fixes")
 
 
