@@ -50,8 +50,13 @@ def inspect_docx_output(
     if require_spine and not _contains_any(visible_text, SPINE_MARKERS):
         result.blocking_items.append("spine_missing: authoritative Word output has no book spine marker.")
 
-    if source_kind == "pdf":
-        _inspect_pdf_editable_text(result, compact_text, metadata, package_info)
+    _inspect_required_editable_text(
+        result,
+        compact_text,
+        metadata,
+        package_info,
+        source_kind=source_kind,
+    )
 
     if PDF_PLACEHOLDER_HEADING in visible_text:
         result.blocking_items.append(
@@ -72,12 +77,15 @@ def inspect_docx_output(
     return result
 
 
-def _inspect_pdf_editable_text(
+def _inspect_required_editable_text(
     result: DocxOutputInspection,
     compact_text: str,
     metadata: Metadata,
     package_info: dict[str, int],
+    *,
+    source_kind: str,
 ) -> None:
+    source_label = source_kind.upper() if source_kind else "SOURCE"
     required_values = [
         value
         for value in [
@@ -91,13 +99,13 @@ def _inspect_pdf_editable_text(
     ]
     if missing_values:
         result.blocking_items.append(
-            "editable_text_missing: PDF-derived Word output does not expose required "
+            f"editable_text_missing: {source_label}-derived Word output does not expose required "
             f"metadata as editable text: {', '.join(missing_values)}"
         )
 
     if package_info["drawing_count"] > 0 and len(compact_text) < 30:
         result.blocking_items.append(
-            "editable_text_missing: PDF-derived Word output appears image-only."
+            f"editable_text_missing: {source_label}-derived Word output appears image-only."
         )
 
 

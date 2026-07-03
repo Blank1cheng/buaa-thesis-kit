@@ -95,7 +95,11 @@ def _replace_cover_table(table, metadata: Metadata) -> None:
         label = re.sub(r"\s+", "", row.cells[0].text)
         for key, value in values.items():
             if key in label:
-                _replace_cell_text_preserving_style(row.cells[1], _metadata_value(value))
+                _replace_cell_text_preserving_style(
+                    row.cells[1],
+                    _metadata_value(value),
+                    font_size=_cover_table_value_font_size(value),
+                )
                 break
 
 
@@ -186,9 +190,25 @@ def _spine_values(metadata: Metadata) -> list[str]:
     ]
 
 
-def _replace_cell_text_preserving_style(cell, text: str) -> None:
+def _cover_table_value_font_size(value: str) -> float | None:
+    length = len(_metadata_value(value))
+    if length >= 16:
+        return 10.5
+    if length >= 10:
+        return 12
+    return None
+
+
+def _replace_cell_text_preserving_style(
+    cell,
+    text: str,
+    *,
+    font_size: float | None = None,
+) -> None:
     paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
     _replace_paragraph_text_preserving_style(paragraph, text)
+    if font_size is not None:
+        _format_runs(paragraph, size=font_size)
     for extra in list(cell.paragraphs[1:]):
         extra._element.getparent().remove(extra._element)
 
@@ -205,7 +225,7 @@ def _replace_paragraph_text_preserving_style(paragraph, text: str) -> None:
         run._r.insert(0, first_run_properties)
 
 
-def _format_runs(paragraph, *, bold: bool = False, size: int = 12) -> None:
+def _format_runs(paragraph, *, bold: bool = False, size: float = 12) -> None:
     for run in paragraph.runs:
         run.bold = bold
         run.font.size = Pt(size)

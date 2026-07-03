@@ -468,11 +468,12 @@ def test_extracts_spaced_cover_student_id_and_unlabeled_cover_date(tmp_path):
             "毕业设计(论文)",
             "基于实拍图像的光电系统性能评估",
             "关键技术研究",
-            "2021年5月",
-            "院（系）名称：自动化科学与电气工程学院",
+            "院（系）名称",
+            "自动化科学与电气工程学院",
             "专业名称：自动化",
             "学生姓名：崔润昊",
             "指导教师：唐荻音",
+            "2021年5月",
             "摘    要",
             "这是摘要。",
             "ABSTRACT",
@@ -486,9 +487,59 @@ def test_extracts_spaced_cover_student_id_and_unlabeled_cover_date(tmp_path):
 
     model = extract_thesis_model(source, work_dir)
 
+    assert model.metadata.title_cn == "基于实拍图像的光电系统性能评估关键技术研究"
     assert model.metadata.student_id == "17375303"
     assert model.metadata.date == "2021年5月"
     assert model.metadata.classification == "TP273"
+
+
+def test_cover_table_metadata_beats_later_task_book_paragraphs(tmp_path):
+    source = tmp_path / "cover-table-priority.docx"
+    work_dir = tmp_path / "work"
+    doc = Document()
+    for text in [
+        "单位代码       10006",
+        "学    号      17375303",
+        "分类号    TP273",
+        "毕业设计(论文)",
+        "基于实拍图像的光电系统性能评估",
+        "关键技术研究",
+        "2021年5月",
+    ]:
+        doc.add_paragraph(text)
+    table = doc.add_table(rows=4, cols=2)
+    rows = [
+        ("院（系）名称", "自动化科学与电气工程学院"),
+        ("专业名称", "自动化"),
+        ("学生姓名", "崔润昊"),
+        ("指导教师", "唐荻音"),
+    ]
+    for row, values in zip(table.rows, rows):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    for text in [
+        "北京航空航天大学",
+        "本科毕业设计（论文）任务书",
+        "申请人所在院系：自动化 专业类 170325 班",
+        "申请人专业：类 170325 班",
+        "摘    要",
+        "这是摘要。",
+        "ABSTRACT",
+        "This is the abstract.",
+        "1 绪论",
+        "正文。",
+        "参考文献",
+        "[1] 王五. 测试[J]. 2021.",
+    ]:
+        doc.add_paragraph(text)
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.metadata.college == "自动化科学与电气工程学院"
+    assert model.metadata.major == "自动化"
+    assert model.metadata.student_name == "崔润昊"
+    assert model.metadata.advisor == "唐荻音"
 
 
 def test_extracted_model_payload_validates_against_schema(tmp_path):

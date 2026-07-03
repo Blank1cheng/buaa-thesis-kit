@@ -90,3 +90,34 @@ def test_render_editable_buaa_docx_compacts_cover_spacing_for_long_titles(tmp_pa
     blank_cover_paragraphs = [text for text in before_spine if not text.strip()]
     assert "2024年6月" in before_spine
     assert len(blank_cover_paragraphs) <= 7
+
+
+def test_render_editable_buaa_docx_shrinks_long_cover_table_values(tmp_path):
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="基于实拍图像的光电系统性能评估关键技术研究",
+            student_name="崔润昊",
+            student_id="17375303",
+            college="自动化科学与电气工程学院",
+            major="自动化",
+            advisor="唐荻音",
+            date="2021年5月",
+            classification="TP273",
+        ),
+        sections=[ContentBlock(id="body-1", type="section", text="正文内容。")],
+    )
+    output = tmp_path / "long-cover-table-value.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    document = Document(str(output))
+    college_cell = document.tables[0].rows[0].cells[1]
+    sizes = [
+        run.font.size.pt
+        for paragraph in college_cell.paragraphs
+        for run in paragraph.runs
+        if run.font.size is not None
+    ]
+    assert college_cell.text == "自动化科学与电气工程学院"
+    assert sizes
+    assert max(sizes) <= 12

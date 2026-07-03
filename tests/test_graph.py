@@ -4,9 +4,11 @@ import base64
 from docx import Document
 from pypdf import PdfWriter
 
-from buaa_thesis_kit.models import Metadata, ThesisModel
+from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
 
 
+ROOT = Path(__file__).resolve().parents[1]
+TEMPLATE = ROOT / "templates" / "buaa_undergraduate_thesis_template.docx"
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -167,15 +169,18 @@ def test_plan_minimal_fixes_promotes_missing_spine_to_repair_action(tmp_path):
     assert not state.blocking_items
 
 
-def test_apply_word_fixes_preserves_source_body_and_inserts_spine(tmp_path):
+def test_apply_word_fixes_renders_docx_source_through_buaa_template(tmp_path):
     from buaa_thesis_kit.graph import GraphState
     from buaa_thesis_kit.graph_nodes import apply_word_fixes
 
     source = tmp_path / "source.docx"
     work = tmp_path / "output_work"
     output = tmp_path / "output"
-    _write_minimal_docx(source)
-    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    document = Document()
+    document.add_paragraph("UNNORMALIZED SOURCE COVER ARTIFACT")
+    document.add_paragraph("Body text that must be preserved.")
+    document.save(source)
+    state = GraphState(source_path=source, output_root=output, work_dir=work, template_path=TEMPLATE)
     state.extraction_source = source
     state.source_kind = "docx"
     state.repair_actions.append("insert_spine")
@@ -188,6 +193,15 @@ def test_apply_word_fixes_preserves_source_body_and_inserts_spine(tmp_path):
             date="2026",
         )
     )
+    state.model.sections.append(
+        ContentBlock(
+            id="sec-1",
+            type="chapter",
+            title="1 Introduction",
+            text="Body text that must be preserved.",
+            level=1,
+        )
+    )
 
     result = apply_word_fixes(state)
 
@@ -196,7 +210,9 @@ def test_apply_word_fixes_preserves_source_body_and_inserts_spine(tmp_path):
     output_doc = Document(str(state.authoritative_docx))
     paragraphs = [paragraph.text for paragraph in output_doc.paragraphs]
     assert "Body text that must be preserved." in paragraphs
-    assert any("Book Spine" in text for text in paragraphs)
+    assert "UNNORMALIZED SOURCE COVER ARTIFACT" not in paragraphs
+    assert any("毕业设计(论文)" in text for text in paragraphs)
+    assert any("书脊" in text for text in paragraphs)
     assert any("Repair First Thesis" in text for text in paragraphs)
 
 
@@ -212,7 +228,7 @@ def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_
     document.add_paragraph("Body text that must be preserved.")
     document.save(source)
 
-    state = GraphState(source_path=source, output_root=output, work_dir=work)
+    state = GraphState(source_path=source, output_root=output, work_dir=work, template_path=TEMPLATE)
     state.extraction_source = source
     state.source_kind = "docx"
     state.repair_actions.append("insert_spine")
@@ -230,8 +246,8 @@ def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_
 
     output_doc = Document(str(state.authoritative_docx))
     paragraphs = [paragraph.text for paragraph in output_doc.paragraphs]
-    assert "论文封面书脊" in paragraphs
-    assert "Book Spine" in paragraphs
+    assert "论文封面书脊" not in paragraphs
+    assert "书脊" in paragraphs
     assert state.applied_repairs == ["insert_spine"]
 
 

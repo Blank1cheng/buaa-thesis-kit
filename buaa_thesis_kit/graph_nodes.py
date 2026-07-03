@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from docx import Document
@@ -49,8 +48,18 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
     state.work_dir.mkdir(parents=True, exist_ok=True)
     repaired_docx = state.work_dir / "repaired.docx"
 
-    if _can_repair_docx_source(state):
-        shutil.copy2(Path(state.extraction_source), repaired_docx)
+    if state.source_kind == "docx":
+        if state.template_path is None:
+            state.blocking_items.append("Editable Word template generation failed: missing Word template.")
+            return NodeResult(next_node="export_pdf")
+        try:
+            render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
+        except Exception as exc:
+            state.blocking_items.append(f"Editable Word template generation failed: {exc}")
+            return NodeResult(next_node="export_pdf")
+        state.notes.append(
+            "Editable BUAA template Word generated from extracted Word content."
+        )
         document = Document(str(repaired_docx))
     elif state.source_kind == "pdf":
         if state.template_path is None:
@@ -150,11 +159,6 @@ def _missing_spine_fields(metadata: Metadata) -> list[str]:
         if not getattr(metadata, field):
             missing.append(field)
     return missing
-
-
-def _can_repair_docx_source(state: GraphState) -> bool:
-    source = state.extraction_source
-    return state.source_kind == "docx" and source is not None and source.suffix.lower() == ".docx" and source.exists()
 
 
 def _append_spine_page(document, metadata: Metadata) -> None:

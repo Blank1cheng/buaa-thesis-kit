@@ -38,6 +38,20 @@ def test_inspect_docx_output_blocks_pdf_word_without_editable_text(tmp_path):
     assert any("editable_text_missing" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_docx_word_without_editable_text(tmp_path):
+    output = tmp_path / "image-only.docx"
+    _write_image_only_docx(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("editable_text_missing" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     output = tmp_path / "editable.docx"
     model = ThesisModel(

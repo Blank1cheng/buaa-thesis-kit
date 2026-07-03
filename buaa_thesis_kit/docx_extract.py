@@ -43,6 +43,20 @@ COVER_COMPACT_LABELS: dict[str, tuple[str, ...]] = {
     "classification": ("中图分类号", "分类号"),
 }
 COVER_DATE_RE = re.compile(r"\d{4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?")
+BUAA_TITLE_ANCHORS = {
+    "毕业设计(论文)",
+    "毕业设计（论文）",
+    "本科毕业设计(论文)",
+    "本科毕业设计（论文）",
+}
+COVER_TITLE_STOP_LABELS = {
+    "院（系）名称",
+    "学院名称",
+    "专业名称",
+    "学生姓名",
+    "指导教师",
+    "指导老师",
+}
 
 
 @dataclass(frozen=True)
@@ -81,7 +95,17 @@ FIELD_LABELS: dict[str, tuple[str, ...]] = {
     ),
     "student_name": (r"学生姓名", r"作者姓名", r"作者", r"姓名", r"Name"),
     "student_id": (r"学生学号", r"学号", r"Student\s*(?:ID|No\.?|Number)"),
-    "college": (r"所在学院", r"学院", r"院系", r"College", r"School"),
+    "college": (
+        r"院（系）名称",
+        r"院\(系\)名称",
+        r"学院名称",
+        r"院系名称",
+        r"所在学院",
+        r"学院",
+        r"院系",
+        r"College",
+        r"School",
+    ),
     "major": (r"专业名称", r"专业", r"Major"),
     "advisor": (r"指导教师姓名", r"指导教师", r"导师姓名", r"导师", r"Advisor", r"Supervisor"),
     "date": (r"完成日期", r"提交日期", r"日期", r"Date"),
@@ -255,6 +279,17 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
             )
 
     if not metadata.title_cn:
+        title, block = _guess_cover_title_after_anchor(blocks[:40])
+        if title and block is not None:
+            metadata.title_cn = title
+            metadata.evidence["title_cn"] = _source(
+                "metadata-cover-title-anchor",
+                block.index,
+                0.66,
+                True,
+            )
+
+    if not metadata.title_cn:
         title, block = _guess_chinese_title(blocks[:30])
         if title:
             metadata.title_cn = title
@@ -305,7 +340,13 @@ def _metadata_scan_units(blocks: list[TextBlock]) -> list[ScanUnit]:
         if row_text:
             units.append(ScanUnit(row_text, row_blocks[0], "metadata-table-row", 0.92))
 
-    return units
+    return sorted(
+        units,
+        key=lambda unit: (
+            unit.block.index if unit.block is not None else 10**9,
+            0 if unit.method == "metadata-table-row" else 1,
+        ),
+    )
 
 
 def _metadata_method(block: TextBlock) -> str:
@@ -393,6 +434,25 @@ def _guess_cover_date(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tuple[
     return "", None
 
 
+def _guess_cover_title_after_anchor(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tuple[str, None]:
+    for index, block in enumerate(blocks):
+        if not _is_title_anchor(block.text):
+            continue
+        title_parts: list[str] = []
+        title_block: TextBlock | None = None
+        for candidate in blocks[index + 1 : min(len(blocks), index + 8)]:
+            text = candidate.text
+            if _is_cover_title_stop(text):
+                break
+            title_parts.append(text)
+            if title_block is None:
+                title_block = candidate
+        title = "".join(title_parts).strip()
+        if title and _contains_cjk(title) and 4 <= len(title) <= 120:
+            return title, title_block
+    return "", None
+
+
 def _guess_chinese_title(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tuple[str, None]:
     for block in blocks:
         text = block.text
@@ -404,6 +464,22 @@ def _guess_chinese_title(blocks: list[TextBlock]) -> tuple[str, TextBlock] | tup
             continue
         return text, block
     return "", None
+
+
+def _is_cover_title_stop(text: str) -> bool:
+    if not text:
+        return True
+    if _compact(text).strip(":：") in {_compact(label) for label in COVER_TITLE_STOP_LABELS}:
+        return True
+    if _is_title_anchor(text) or _contains_any_label(text) or _is_structural_marker(text):
+        return True
+    if COVER_DATE_RE.search(text):
+        return True
+    return False
+
+
+def _is_title_anchor(text: str) -> bool:
+    return _compact(text) in {_compact(anchor) for anchor in BUAA_TITLE_ANCHORS}
 
 
 def _split_content(
@@ -714,6 +790,10 @@ def _is_structural_marker(text: str) -> bool:
     compact = _compact(text).lower()
     return compact in {
         "封面",
+        "毕业设计(论文)",
+        "毕业设计（论文）",
+        "本科毕业设计(论文)",
+        "本科毕业设计（论文）",
         "任务书",
         "原创性声明",
         "目录",
