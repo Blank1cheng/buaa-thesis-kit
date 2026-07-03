@@ -88,6 +88,7 @@ def build_report(
     blocking_items: list[str],
     manual_review: list[str],
     notes: list[str],
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output_statuses = [_normalize_status(status) for status in outputs.values()]
     missing_required = _missing_required_report_outputs(outputs)
@@ -100,7 +101,7 @@ def build_report(
     else:
         status = "pass"
 
-    return {
+    report = {
         "status": status,
         "source": source,
         "outputs": outputs,
@@ -109,6 +110,9 @@ def build_report(
         "manual_review": manual_review,
         "notes": notes,
     }
+    if metadata is not None:
+        report["metadata"] = metadata
+    return report
 
 
 def write_report_md(report: dict[str, Any], path: Path) -> None:
@@ -131,6 +135,10 @@ def write_report_md(report: dict[str, Any], path: Path) -> None:
         "## Summary",
         "",
         *_format_mapping(report.get("summary", {})),
+        "",
+        "## Metadata",
+        "",
+        *_format_metadata(report.get("metadata", {})),
         "",
         "## Blocking Items",
         "",
@@ -204,3 +212,25 @@ def _format_list(items: Any) -> list[str]:
     if not items:
         return ["- None"]
     return [f"- {item}" for item in items]
+
+
+def _format_metadata(metadata: Any) -> list[str]:
+    if not metadata:
+        return ["- None"]
+    lines: list[str] = []
+    for field, payload in metadata.items():
+        if isinstance(payload, dict):
+            value = payload.get("value", "")
+            evidence = payload.get("evidence") or {}
+            lines.append(f"- {field}: {value}")
+            if isinstance(evidence, dict) and evidence:
+                evidence_parts = [
+                    f"{key}={evidence[key]}"
+                    for key in ("method", "page_hint", "paragraph_index", "confidence", "requires_review")
+                    if key in evidence and evidence[key] is not None
+                ]
+                if evidence_parts:
+                    lines.append(f"  evidence: {', '.join(evidence_parts)}")
+        else:
+            lines.append(f"- {field}: {payload}")
+    return lines

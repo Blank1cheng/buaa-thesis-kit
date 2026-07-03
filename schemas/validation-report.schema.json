@@ -7,6 +7,7 @@
     "source": {"type": "string"},
     "outputs": {"type": "object"},
     "summary": {"type": "object"},
+    "metadata": {"type": "object"},
     "blocking_items": {"type": "array", "items": {"type": "string"}},
     "manual_review": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}}

@@ -231,6 +231,9 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     assert messages == []
     assert any("pdf" in item.lower() and "layout" in item.lower() for item in report["manual_review"])
     assert "PDF Pipeline Thesis" in (output / "thesis.tex").read_text(encoding="utf-8")
+    assert report["metadata"]["student_id"]["value"] == "20370001"
+    assert report["metadata"]["student_id"]["evidence"]["method"] == "pdf-text-label"
+    assert "student_id: 20370001" in (output / "report.md").read_text(encoding="utf-8")
 
 
 def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monkeypatch):

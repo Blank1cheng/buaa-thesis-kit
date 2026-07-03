@@ -77,6 +77,7 @@ def run_pipeline(
                 blocking_items,
                 manual_review,
                 notes,
+                _metadata_report(model),
             )
 
         work_dir, remove_work = _prepare_work_dir(output_root, keep_work)
@@ -108,6 +109,7 @@ def run_pipeline(
             state.blocking_items,
             state.manual_review,
             state.notes,
+            _metadata_report(model),
         )
     finally:
         if work_dir is not None and remove_work:
@@ -424,6 +426,31 @@ def _summary(model: ThesisModel) -> dict[str, int]:
     }
 
 
+def _metadata_report(model: ThesisModel) -> dict[str, dict[str, Any]]:
+    metadata = model.metadata
+    fields = (
+        "title_cn",
+        "title_en",
+        "student_name",
+        "student_id",
+        "college",
+        "major",
+        "advisor",
+        "date",
+        "classification",
+        "unit_code",
+    )
+    report: dict[str, dict[str, Any]] = {}
+    for field in fields:
+        value = getattr(metadata, field)
+        evidence = metadata.evidence.get(field)
+        report[field] = {
+            "value": value,
+            "evidence": evidence.to_dict() if evidence is not None else None,
+        }
+    return report
+
+
 def _model_failed_message(model: ThesisModel) -> str:
     details = "; ".join(model.extraction_warnings) if model.extraction_warnings else "no details"
     return f"Extraction failed: {details}"
@@ -454,6 +481,7 @@ def _finalize_report(
     blocking_items: list[str],
     manual_review: list[str],
     notes: list[str],
+    metadata: dict[str, Any],
 ) -> dict[str, Any]:
     report_path = output_root / "report.md"
     report = build_report(
@@ -463,6 +491,7 @@ def _finalize_report(
         blocking_items=_dedupe(blocking_items),
         manual_review=_dedupe(manual_review),
         notes=_dedupe(notes),
+        metadata=metadata,
     )
     write_report_md(report, report_path)
 
@@ -483,6 +512,7 @@ def _finalize_report(
         blocking_items=_dedupe(final_blocking),
         manual_review=_dedupe(manual_review),
         notes=_dedupe(final_notes),
+        metadata=metadata,
     )
     write_report_md(final_report, report_path)
     return final_report

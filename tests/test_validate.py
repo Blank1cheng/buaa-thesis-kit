@@ -200,6 +200,32 @@ def test_build_report_marks_pass_when_no_failures_or_reviews():
     }
 
 
+def test_build_report_includes_metadata_when_provided():
+    metadata = {
+        "student_id": {
+            "value": "20370001",
+            "evidence": {
+                "method": "pdf-text-label",
+                "page_hint": 1,
+                "confidence": 0.7,
+                "requires_review": True,
+            },
+        }
+    }
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        metadata=metadata,
+    )
+
+    assert report["metadata"] == metadata
+
+
 def test_build_report_fails_for_missing_required_or_unknown_output_statuses():
     no_outputs = build_report(
         source="source.docx",
@@ -255,6 +281,47 @@ def test_write_report_md_includes_policy_text_sections_and_list_items(tmp_path):
     assert "- missing PDF export" in text
     assert "- confirm equation layout" in text
     assert "- generated from template" in text
+
+
+def test_write_report_md_includes_metadata_values_and_evidence(tmp_path):
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        metadata={
+            "title_cn": {
+                "value": "PDF Pipeline Thesis",
+                "evidence": {
+                    "method": "pdf-title-heuristic",
+                    "page_hint": 1,
+                    "confidence": 0.4,
+                    "requires_review": True,
+                },
+            },
+            "student_id": {
+                "value": "20370001",
+                "evidence": {
+                    "method": "pdf-text-label",
+                    "page_hint": 1,
+                    "confidence": 0.7,
+                    "requires_review": True,
+                },
+            },
+        },
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Metadata" in text
+    assert "- title_cn: PDF Pipeline Thesis" in text
+    assert "method=pdf-title-heuristic" in text
+    assert "- student_id: 20370001" in text
+    assert "confidence=0.7" in text
 
 
 def test_export_pdf_from_docx_returns_false_for_missing_source_without_junk(tmp_path):
