@@ -62,6 +62,10 @@ FIGURE_CAPTION_RE = re.compile(
     "^(?:(?:\u56fe)\\s*\\d+(?:[.\\-]\\d+)*|fig(?:ure)?\\.?\\s*\\d+(?:[.\\-]\\d+)*)\\s+.+",
     flags=re.IGNORECASE,
 )
+TABLE_CAPTION_RE = re.compile(
+    "^(?:(?:\u8868)\\s*\\d+(?:[.\\-]\\d+)*|table\\s+\\d+(?:[.\\-]\\d+)*)\\s+.+",
+    flags=re.IGNORECASE,
+)
 MIN_DISPLAY_IMAGE_AREA = 5_000.0
 LARGE_UNCAPTIONED_IMAGE_AREA = 40_000.0
 MAX_FIGURE_CAPTION_DISTANCE = 90.0
@@ -146,6 +150,7 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
         if lines:
             model.metadata = _extract_metadata(lines)
             model.sections, model.references = _extract_content(lines)
+            model.sections, model.tables = _extract_tables_from_sections(model.sections)
             model.extraction_warnings.append(
                 "PDF input converted through text extraction; layout review required against the source PDF."
             )
@@ -157,6 +162,10 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
         if any(figure.type == "pdf-figure-image" for figure in model.figures):
             model.extraction_warnings.append(
                 "PDF embedded figures extracted as cropped images; captions and placement require review."
+            )
+        if model.tables:
+            model.extraction_warnings.append(
+                "PDF tabular text converted to editable tables; structure requires review."
             )
         model.extraction_warnings.extend(_metadata_warnings(model.metadata))
         if not model.sections and not model.figures:
@@ -637,6 +646,94 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
     return sections, references
 
 
+def _extract_tables_from_sections(sections: list[ContentBlock]) -> tuple[list[ContentBlock], list[ContentBlock]]:
+    rendered_sections: list[ContentBlock] = []
+    tables: list[ContentBlock] = []
+    for section in sections:
+        lines = [line for line in str(section.text or "").splitlines()]
+        if not lines:
+            rendered_sections.append(section)
+            continue
+
+        kept_lines: list[str] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index].strip()
+            if not _is_table_caption(line):
+                kept_lines.append(lines[index])
+                index += 1
+                continue
+
+            table_rows: list[str] = []
+            cursor = index + 1
+            while cursor < len(lines) and _is_tabular_text_line(lines[cursor]):
+                table_rows.append(_normalize_table_row(lines[cursor]))
+                cursor += 1
+
+            if len(table_rows) < 2:
+                kept_lines.append(lines[index])
+                index += 1
+                continue
+
+            tables.append(
+                ContentBlock(
+                    id=f"pdf-table-{len(tables) + 1}",
+                    type="table",
+                    title=line,
+                    text="\n".join(table_rows),
+                    level=section.level,
+                    source=_table_source(section),
+                )
+            )
+            index = cursor
+
+        rendered_sections.append(
+            ContentBlock(
+                id=section.id,
+                type=section.type,
+                title=section.title,
+                text="\n".join(line for line in kept_lines if line).strip(),
+                level=section.level,
+                source=section.source,
+            )
+        )
+    return rendered_sections, tables
+
+
+def _is_table_caption(text: str) -> bool:
+    return bool(TABLE_CAPTION_RE.match(str(text or "").strip()))
+
+
+def _is_tabular_text_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    return "\t" in value or "|" in value or bool(re.search(r"\S\s{2,}\S", value))
+
+
+def _normalize_table_row(text: str) -> str:
+    value = str(text or "").strip()
+    if "\t" in value:
+        cells = value.split("\t")
+    elif "|" in value:
+        cells = value.strip("|").split("|")
+    else:
+        cells = re.split(r"\s{2,}", value)
+    return "\t".join(cell.strip() for cell in cells if cell.strip())
+
+
+def _table_source(section: ContentBlock) -> SourceEvidence:
+    source = section.source
+    return SourceEvidence(
+        file=SOURCE_PDF_NAME,
+        method="pdf-table-text",
+        paragraph_index=source.paragraph_index if source else None,
+        page_hint=source.page_hint if source else None,
+        confidence=0.55,
+        requires_review=True,
+    )
+
+
 def _merge_split_headings(lines: list[PdfLine]) -> list[PdfLine]:
     merged: list[PdfLine] = []
     index = 0
@@ -852,7 +949,7 @@ def _contains_cjk(text: str) -> bool:
 
 
 def _clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text).replace("\u3000", " ")).strip()
+    return re.sub(r"[^\S\t]+", " ", str(text).replace("\u3000", " ")).strip()
 
 
 __all__ = ["extract_pdf_model"]

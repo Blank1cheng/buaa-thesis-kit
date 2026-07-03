@@ -100,6 +100,36 @@ def _write_text_pdf(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_table(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Table Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "Before table paragraph.",
+                "Table 1.1 Evaluation metrics",
+                "Metric\tValue",
+                "Accuracy\t98%",
+                "Recall\t95%",
+                "After table paragraph.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_blank_pdf(path: Path) -> None:
     document = fitz.open()
     document.new_page(width=300, height=400)
@@ -222,6 +252,32 @@ def test_run_pipeline_pdf_input_generates_editable_template_docx(tmp_path, monke
     assert "This PDF contains extractable thesis text." in document_xml
     assert "20370001" in document_xml
     assert "PDF Extracted Text" not in document_xml
+
+
+def test_run_pipeline_pdf_table_becomes_editable_word_table(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source-table.pdf"
+    output = tmp_path / "output"
+    _write_text_pdf_with_table(source)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", _stub_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "needs_review"
+    assert report["summary"]["tables"] == 1
+    document = Document(output / "thesis.docx")
+    table_text = [
+        [cell.text for cell in row.cells]
+        for table in document.tables
+        for row in table.rows
+    ]
+    assert ["Metric", "Value"] in table_text
+    assert ["Accuracy", "98%"] in table_text
+    assert ["Recall", "95%"] in table_text
+    tex = (output / "thesis.tex").read_text(encoding="utf-8")
+    assert "\\begin{table}" in tex
+    assert "Accuracy & 98\\%" in tex
 
 
 def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_screenshot(

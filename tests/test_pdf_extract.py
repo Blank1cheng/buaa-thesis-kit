@@ -64,6 +64,36 @@ def _write_text_pdf_with_captioned_figure(path: Path) -> None:
     document.close()
 
 
+def _write_text_pdf_with_table(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=595, height=842)
+    page.insert_text(
+        (72, 72),
+        "\n".join(
+            [
+                "Title: PDF Table Thesis",
+                "Student Name: Zhang San",
+                "Student ID: 20370001",
+                "College: Automation College",
+                "Major: Automation",
+                "Advisor: Li Si",
+                "Date: 2026-07",
+                "1 Introduction",
+                "Before table paragraph.",
+                "Table 1.1 Evaluation metrics",
+                "Metric\tValue",
+                "Accuracy\t98%",
+                "Recall\t95%",
+                "After table paragraph.",
+            ]
+        ),
+        fontsize=12,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(path)
+    document.close()
+
+
 def _write_blank_pdf(path: Path) -> None:
     document = fitz.open()
     document.new_page(width=300, height=400)
@@ -106,6 +136,26 @@ def test_extract_text_pdf_extracts_captioned_figures_and_skips_decorative_images
     assert figure.source.method == "pdf-embedded-image"
     assert figure.source.page_hint == 1
     assert any("embedded figure" in warning.lower() for warning in model.extraction_warnings)
+
+
+def test_extract_text_pdf_promotes_tabular_rows_to_editable_table(tmp_path):
+    source = tmp_path / "source-with-table.pdf"
+    work = tmp_path / "work"
+    _write_text_pdf_with_table(source)
+
+    model = extract_pdf_model(source, work)
+
+    assert len(model.tables) == 1
+    table = model.tables[0]
+    assert table.title == "Table 1.1 Evaluation metrics"
+    assert table.text == "Metric\tValue\nAccuracy\t98%\nRecall\t95%"
+    assert table.source is not None
+    assert table.source.method == "pdf-table-text"
+    combined_sections = "\n".join(section.text for section in model.sections)
+    assert "Before table paragraph." in combined_sections
+    assert "After table paragraph." in combined_sections
+    assert "Metric\tValue" not in combined_sections
+    assert "Accuracy\t98%" not in combined_sections
 
 
 def test_extract_metadata_recovers_vertical_cover_lines():
