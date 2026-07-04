@@ -155,6 +155,7 @@ python scripts/run_pipeline.py "D:\Work\研二下\Skill\论文\崔润昊毕设�
 python scripts/run_pipeline.py "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --out output
 python scripts/validate_front_matter.py "C:\Users\admin\Desktop\删减毕设.docx" output\thesis.docx --sample-mode truncated
 python scripts/validate_frontmatter_render.py --reference "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --candidate output\thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output\frontmatter_diff
+python scripts/validate_layout_consistency.py --reference "C:\Users\admin\Desktop\删减毕设.docx" --candidate output\thesis.docx --sample-mode truncated --out output\layout_consistency_report.json
 python scripts/capture_frontmatter_template.py "C:\path\to\reference.docx" --out templates\front_matter_captured
 ```
 

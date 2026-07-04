@@ -6,7 +6,9 @@ from typing import Any
 from buaa_thesis_kit.pdf_export import _verify_pdf_file
 
 
-ALLOWED_TOP_LEVEL = {"thesis.docx", "thesis.pdf", "thesis.tex", "report.md", "image"}
+REQUIRED_TOP_LEVEL = {"thesis.docx", "thesis.pdf", "thesis.tex", "report.md", "image"}
+OPTIONAL_TOP_LEVEL = {"layout_consistency_report.json"}
+ALLOWED_TOP_LEVEL = REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
 REQUIRED_FILES = ("thesis.docx", "thesis.pdf", "thesis.tex", "report.md")
 REQUIRED_REPORT_OUTPUT_ALIASES = (
     ("word", "thesis.docx"),
@@ -51,7 +53,7 @@ def validate_clean_output(output_dir: Path) -> tuple[bool, list[str]]:
     entries = {path.name: path for path in output.iterdir()}
     actual_names = set(entries)
 
-    for missing in sorted(ALLOWED_TOP_LEVEL - actual_names):
+    for missing in sorted(REQUIRED_TOP_LEVEL - actual_names):
         messages.append(f"Missing required output: {missing}")
 
     for unexpected in sorted(actual_names - ALLOWED_TOP_LEVEL):

@@ -33,6 +33,17 @@ def test_validate_clean_output_passes_with_minimal_nonempty_files_and_image_dir(
     assert messages == []
 
 
+def test_validate_clean_output_allows_layout_consistency_report(tmp_path):
+    output_dir = tmp_path / "output"
+    _write_required_outputs(output_dir)
+    (output_dir / "layout_consistency_report.json").write_text("{}", encoding="utf-8")
+
+    ok, messages = validate_clean_output(output_dir)
+
+    assert ok is True
+    assert messages == []
+
+
 def test_validate_clean_output_rejects_unexpected_process_files_at_top_level(tmp_path):
     output_dir = tmp_path / "output"
     _write_required_outputs(output_dir)
@@ -630,3 +641,34 @@ def test_verify_pdf_file_checks_existence_size_header_and_parseability(tmp_path)
     assert "invalid" in truncated_reason.lower()
     assert valid_ok is True
     assert valid_reason == "PDF export verified"
+
+
+def test_update_word_fields_updates_toc_and_repagination():
+    calls = []
+
+    class Fields:
+        def Update(self):
+            calls.append("fields")
+
+    class TocItem:
+        def Update(self):
+            calls.append("toc")
+
+    class Tocs:
+        Count = 1
+
+        def __call__(self, index):
+            assert index == 1
+            return TocItem()
+
+    class FakeDocument:
+        def __init__(self):
+            self.Fields = Fields()
+            self.TablesOfContents = Tocs()
+
+        def Repaginate(self):
+            calls.append("repaginate")
+
+    pdf_export._update_word_fields(FakeDocument())
+
+    assert calls == ["fields", "toc", "repaginate"]

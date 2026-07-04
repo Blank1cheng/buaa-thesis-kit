@@ -83,7 +83,7 @@ def _append_model_content(document, model: ThesisModel, body_sections: list[Cont
         body_sections,
         model.figures,
     )
-    _add_tables(document, model.tables)
+    _add_tables(document, _body_tables(model.tables))
     _add_equations(document, _trusted_editable_equations(model))
     _add_references(document, model.references)
     _add_appendices(document, model.appendices)
@@ -103,6 +103,25 @@ def _body_sections(sections: list[ContentBlock]) -> list[ContentBlock]:
         for section in _sections_without_pdf_placeholder_heading(sections)
         if not _is_front_matter_section(section)
     ]
+
+
+def _body_tables(tables: list[ContentBlock]) -> list[ContentBlock]:
+    return [
+        table
+        for table in tables
+        if not _is_cover_metadata_table(table)
+    ]
+
+
+def _is_cover_metadata_table(table: ContentBlock) -> bool:
+    text = "\n".join([_metadata_value(table.title), _metadata_value(table.text)])
+    compact = re.sub(r"\s+", "", text)
+    hit_count = sum(
+        1
+        for label in COVER_METADATA_LABELS
+        if re.sub(r"\s+", "", label) in compact
+    )
+    return hit_count >= 3
 
 
 def _is_front_matter_section(section: ContentBlock) -> bool:

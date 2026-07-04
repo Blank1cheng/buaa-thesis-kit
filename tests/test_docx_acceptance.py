@@ -142,6 +142,24 @@ def test_inspect_docx_output_blocks_figure_debug_and_local_paths(tmp_path):
     assert any("unsafe_word_body_text" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_cover_field_labels_leaking_to_body(tmp_path):
+    output = tmp_path / "cover-labels-leaked.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("院（系）名称 专业名称 学生姓名 指导教师")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("unsafe_word_body_text" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_blocks_expanded_debug_and_domain_markers(tmp_path):
     output = tmp_path / "expanded-debug-text.docx"
     document = Document()

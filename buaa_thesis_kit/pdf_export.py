@@ -158,6 +158,10 @@ def _update_word_fields(document) -> None:
             document.TablesOfContents(index).Update()
     except Exception:
         pass
+    try:
+        document.Repaginate()
+    except Exception:
+        pass
 
 
 def _export_with_libreoffice(docx_path: Path, pdf_path: Path) -> tuple[bool, str]:

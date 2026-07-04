@@ -38,6 +38,15 @@ FORBIDDEN_VISIBLE_TEXT_MARKERS = (
     ".emf",
     ".png",
 )
+COVER_FIELD_LEAK_MARKERS = (
+    "院（系）名称",
+    "专业名称",
+    "学生姓名",
+    "指导教师",
+)
+FORBIDDEN_VISIBLE_TEXT_PATTERNS = (
+    re.compile(r"image\d+\.(?:wmf|emf)", flags=re.IGNORECASE),
+)
 
 
 @dataclass
@@ -302,6 +311,9 @@ def _inspect_forbidden_visible_text(
     document,
 ) -> None:
     found = [marker for marker in FORBIDDEN_VISIBLE_TEXT_MARKERS if marker in visible_text]
+    for pattern in FORBIDDEN_VISIBLE_TEXT_PATTERNS:
+        found.extend(sorted(set(pattern.findall(visible_text))))
+    found.extend(_cover_field_leaks(document))
     if found:
         result.blocking_items.append(
             "unsafe_word_body_text: final Word output exposes process/debug text or local asset paths: "
@@ -327,6 +339,30 @@ def _inspect_formula_token_dump(result: DocxOutputInspection, document) -> None:
                 return
         else:
             consecutive = 0
+
+
+def _cover_field_leaks(document) -> list[str]:
+    leaks: list[str] = []
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        compact = _compact_text(text)
+        exact_hits = [
+            marker
+            for marker in COVER_FIELD_LEAK_MARKERS
+            if compact == _compact_text(marker)
+        ]
+        cluster_hits = [
+            marker
+            for marker in COVER_FIELD_LEAK_MARKERS
+            if _compact_text(marker) in compact
+        ]
+        if exact_hits:
+            leaks.extend(exact_hits)
+        elif len(cluster_hits) >= 2:
+            leaks.extend(cluster_hits)
+    return sorted(set(leaks))
 
 
 def _document_visible_paragraphs(document) -> list[str]:
