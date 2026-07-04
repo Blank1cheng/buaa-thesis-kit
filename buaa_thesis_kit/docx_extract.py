@@ -552,12 +552,25 @@ def _split_content(
 
         if mode in {"chinese_abstract", "english_abstract"}:
             if _is_keywords_line(text):
+                keyword_key = "keywords_cn" if mode == "chinese_abstract" else "keywords_en"
+                front_matter_lines[keyword_key] = [_keywords_value(text)]
+                continue
+            if mode == "chinese_abstract" and _is_english_front_matter_transition(text):
+                _capture_english_front_matter_line(front_matter_lines, text)
+                mode = None
+                continue
+            if mode == "english_abstract" and _is_english_author_or_tutor_line(text):
+                _capture_english_front_matter_line(front_matter_lines, text)
                 continue
             heading = _detect_heading(block)
             if heading is None:
                 front_matter_lines.setdefault(mode, []).append(text)
                 continue
             mode = None
+
+        if _is_english_author_or_tutor_line(text) or _looks_like_english_title_line(text):
+            _capture_english_front_matter_line(front_matter_lines, text)
+            continue
 
         if mode == "references":
             if _is_reference_entry(text) or _detect_heading(block) is None:
@@ -1059,7 +1072,52 @@ def _is_english_abstract_heading(text: str) -> bool:
 
 
 def _is_keywords_line(text: str) -> bool:
-    return bool(re.match(r"^(?:关键词|关键字|Keywords?)\s*[:：]", text, flags=re.IGNORECASE))
+    return bool(re.match(r"^(?:关键词|关键字|Key\s*Words?|Keywords?)\s*[:：]", text, flags=re.IGNORECASE))
+
+
+def _keywords_value(text: str) -> str:
+    return re.sub(
+        r"^(?:关键词|关键字|Key\s*Words?|Keywords?)\s*[:：]\s*",
+        "",
+        _clean_text(text),
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _is_english_front_matter_transition(text: str) -> bool:
+    return _is_english_author_or_tutor_line(text) or _looks_like_english_title_line(text)
+
+
+def _is_english_author_or_tutor_line(text: str) -> bool:
+    return bool(re.match(r"^(?:Author|Tutor|Supervisor)\s*[:：]", _clean_text(text), flags=re.IGNORECASE))
+
+
+def _looks_like_english_title_line(text: str) -> bool:
+    value = _clean_text(text)
+    if not (12 <= len(value) <= 180):
+        return False
+    if _contains_cjk(value) or _is_keywords_line(value) or _is_english_author_or_tutor_line(value):
+        return False
+    if _is_english_abstract_heading(value) or _looks_like_toc_entry(value):
+        return False
+    words = re.findall(r"[A-Za-z]{2,}", value)
+    if len(words) < 4:
+        return False
+    return bool(re.match(r"^(?:Research|Study|Design|Analysis|Method|Methods|A|An|The)\b", value, flags=re.IGNORECASE))
+
+
+def _capture_english_front_matter_line(lines: dict[str, list[str]], text: str) -> None:
+    value = _clean_text(text)
+    author = re.match(r"^Author\s*[:：]\s*(.+)$", value, flags=re.IGNORECASE)
+    if author:
+        lines["author_en"] = [author.group(1).strip()]
+        return
+    tutor = re.match(r"^(?:Tutor|Supervisor)\s*[:：]\s*(.+)$", value, flags=re.IGNORECASE)
+    if tutor:
+        lines["tutor_en"] = [tutor.group(1).strip()]
+        return
+    if _looks_like_english_title_line(value):
+        lines["title_en"] = [value]
 
 
 def _is_references_heading(text: str) -> bool:

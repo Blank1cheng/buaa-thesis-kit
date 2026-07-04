@@ -14,6 +14,10 @@
 
 模板填充必须保持固定顺序：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。目录由 Word TOC 域生成，导出 PDF 前必须更新域；不得把源 PDF/DOCX 的目录文本作为正文复制。已经渲染到任务书、声明、摘要、目录或封面的内容必须从正文 section 中过滤，避免重复。
 
+封面、书脊、任务书、声明、摘要和目录必须走 `front_matter_renderer`，不能回退为普通段落堆叠。固定校徽和北航字标来自 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；书脊使用竖排文本框 `w:textDirection="tbRl"`，不显示横排 `书脊` 或 `Book Spine` 调试字样。摘要和目录使用罗马页码 section，正文 section 必须 `start=1` 重新编号。
+
+交付前运行 `python scripts/validate_front_matter.py <reference.docx> output/thesis.docx`。该脚本至少检查封面字段、竖排书脊、中英文摘要分离、TOC 域、前置页罗马页码、正文页码重启，以及旧调试标记/本地路径是否进入 Word 正文。
+
 DOCX 自动编号丢失时，可从后续 `1.1`、`2.1` 等小节推断一级标题编号并恢复为 `1 绪论` 这类标题。章末总结句，例如 `第一章 绪论。本章介绍...`，应保持为正文段落，不能当成新章标题或分页触发器。
 
 最终 Word 正文不得包含 `[Figure inserted]`、`[Figure requires review]`、`[Equation preview inserted]`、本地绝对路径、`.worktrees`、`.wmf`、`.emf` 或 `.png` 等过程痕迹。图像、OCR、公式和路径证据只能进入 `output/report.md` 与 `output/image/`。参考文献标题必须是 `参考文献`，独立英文 `References` 标题应视为不合规。

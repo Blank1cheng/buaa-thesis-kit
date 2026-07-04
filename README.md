@@ -127,6 +127,10 @@ DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片
 
 最终 `thesis.docx` 必须由统一 Word 模板生成固定前置结构：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。PDF 输入不得把源目录复制为正文；目录必须由 Word TOC 域生成，并在导出 PDF 前通过 Word COM 更新。正文渲染时必须过滤已进入前置结构的任务书、声明、摘要、目录和封面元数据，避免重复出现在正文里。
 
+前置页由 `buaa_thesis_kit/front_matter_renderer.py` 统一渲染，不再由普通正文段落流式堆叠。封面使用固定模板页和固定资源 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；中文题名会先拆成稳定两行，避免末尾单字换行。书脊使用 OOXML 竖排文本框 `w:textDirection="tbRl"`，不再输出横排“书脊”调试页。
+
+中文摘要、英文摘要和目录使用独立 section：摘要/目录页脚为罗马页码，正文 section 从 `第 1 页` 重新编号。中文摘要页只包含中文题名、学生/指导老师、`摘    要`、中文摘要正文和 `关键词：`；英文题名、`Author:`、`Tutor:` 只能进入英文摘要页。
+
 章节结构优先使用源文档的可编辑标题；当 DOCX 自动编号没有出现在段落文本中时，流水线可根据后续 `1.1`、`2.1` 等小节号恢复一级标题编号。类似 `第一章 绪论。本章介绍...` 的章末总结句应作为正文段落保留，不得误判成新的一级标题或触发分页。
 
 ## 最终正文禁入项
@@ -147,6 +151,7 @@ DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片
 python -m pytest tests -q
 python scripts/run_pipeline.py "D:\Work\研二下\Skill\论文\崔润昊毕设打印版.docx" --out output
 python scripts/run_pipeline.py "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --out output
+python scripts/validate_front_matter.py "C:\Users\admin\Desktop\删减毕设.docx" output\thesis.docx
 ```
 
 真实样例中的公式和部分图片会被标记为 `needs_review`，这是预期行为：系统不会把不确定的

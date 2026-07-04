@@ -77,7 +77,11 @@ def inspect_pdf_output(pdf_path: Path) -> PdfOutputInspection:
         if marker_pages:
             result.notes.append(
                 "PDF layout validation passed: "
-                + ", ".join(f"{name}=p{page}" for name, page in marker_pages.items())
+                + ", ".join(
+                    f"{name}=p{marker_pages[name]}"
+                    for name in ORDERED_MARKERS
+                    if name in marker_pages
+                )
             )
             if cover_geometry_note:
                 result.notes.append(cover_geometry_note)
@@ -96,7 +100,23 @@ def _marker_pages(document) -> dict[str, int]:
                 marker_pages[name] = page_number
         if "body" not in marker_pages and any(_is_body_heading(line) for line in lines):
             marker_pages["body"] = page_number
+    _infer_spine_page(document, marker_pages)
     return marker_pages
+
+
+def _infer_spine_page(document, marker_pages: dict[str, int]) -> None:
+    if "spine" in marker_pages:
+        return
+    cover_page = marker_pages.get("cover")
+    declaration_page = marker_pages.get("declaration")
+    if cover_page is None or declaration_page is None:
+        return
+    candidate = cover_page + 1
+    if candidate >= declaration_page or candidate > document.page_count:
+        return
+    lines = _page_lines(document.load_page(candidate - 1))
+    if lines and not any(_contains_exact_line(lines, markers) for _name, markers in FRONT_MATTER_MARKERS):
+        marker_pages["spine"] = candidate
 
 
 def _page_lines(page) -> list[str]:
@@ -202,7 +222,7 @@ def _cover_geometry_measurements(layouts: list[PdfLineLayout]) -> dict[str, floa
         for line in layouts
         if 13.0 <= line.size <= 17.0
         and not _looks_like_cover_date(line.text)
-        and line.y0 >= 400.0
+        and line.y0 >= 500.0
     ]
     if field_rows:
         measurements["field_rows"] = min(line.y0 for line in field_rows)

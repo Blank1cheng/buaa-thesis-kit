@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import base64
+import zipfile
 import fitz
 from docx import Document
 from pypdf import PdfWriter
@@ -18,6 +19,11 @@ OMML_FRAGMENT = (
     "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
     "</m:oMathPara>"
 )
+
+
+def _document_xml(path: Path) -> str:
+    with zipfile.ZipFile(path) as docx_zip:
+        return docx_zip.read("word/document.xml").decode("utf-8")
 
 
 def _write_minimal_docx(path: Path) -> None:
@@ -260,7 +266,9 @@ def test_apply_word_fixes_renders_docx_source_through_buaa_template(tmp_path):
     assert "Body text that must be preserved." in paragraphs
     assert "UNNORMALIZED SOURCE COVER ARTIFACT" not in paragraphs
     assert any("毕业设计(论文)" in text for text in paragraphs)
-    assert any("书脊" in text for text in paragraphs)
+    document_xml = _document_xml(state.authoritative_docx)
+    assert "BUAA_VERTICAL_SPINE" in document_xml
+    assert 'w:textDirection w:val="tbRl"' in document_xml
     assert any("Repair First Thesis" in text for text in paragraphs)
 
 
@@ -295,7 +303,8 @@ def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_
     output_doc = Document(str(state.authoritative_docx))
     paragraphs = [paragraph.text for paragraph in output_doc.paragraphs]
     assert "论文封面书脊" not in paragraphs
-    assert "书脊" in paragraphs
+    assert not any(text.strip() == "书脊" for text in paragraphs)
+    assert "BUAA_VERTICAL_SPINE" in _document_xml(state.authoritative_docx)
     assert state.applied_repairs == ["insert_spine"]
 
 

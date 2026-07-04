@@ -246,6 +246,43 @@ def test_inspect_docx_output_blocks_when_expected_omml_equation_is_missing(tmp_p
     assert any("editable_omml_equation_missing" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_accepts_vertical_spine_textbox_without_debug_marker(tmp_path):
+    output = tmp_path / "vertical-spine.docx"
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Vertical Spine Thesis",
+            student_id="20370001",
+            student_name="Zhang San",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026年7月",
+            classification="TN953",
+        ),
+        sections=[
+            ContentBlock(
+                id="section-1",
+                type="section",
+                title="1 Introduction",
+                text="This PDF contains extractable thesis text.",
+            )
+        ],
+    )
+    render_editable_buaa_docx(TEMPLATE, model, output)
+    visible_text = "\n".join(paragraph.text for paragraph in Document(str(output)).paragraphs)
+
+    result = inspect_docx_output(
+        output,
+        model.metadata,
+        source_kind="pdf",
+        require_spine=True,
+    )
+
+    assert "Book Spine" not in visible_text
+    assert "书脊" not in visible_text
+    assert not any("spine_missing" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_accepts_editable_template_word(tmp_path):
     output = tmp_path / "editable.docx"
     model = ThesisModel(

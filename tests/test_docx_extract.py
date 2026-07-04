@@ -224,6 +224,48 @@ def test_splits_front_matter_body_sections_and_references_without_toc_entries(tm
     ]
 
 
+def test_chinese_abstract_stops_before_english_title_author_and_tutor(tmp_path):
+    source = tmp_path / "abstract-boundary.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "中文题目：基于实拍图像的光电系统性能评估关键技术研究",
+            "学生姓名：崔润昊",
+            "学号：17375303",
+            "学院：自动化科学与电气工程学院",
+            "专业：自动化",
+            "指导教师：唐荻音",
+            "日期：2021年5月",
+            "摘    要",
+            "这是中文摘要正文。",
+            "关键词：光电系统，调制传递函数",
+            "Research on Key Technologies of Performance Evaluation of Electro-Optical System",
+            "Author: CUI Run-hao",
+            "Tutor: TANG Di-yin",
+            "Abstract",
+            "This is the English abstract.",
+            "Key Words: electro-optical system, MTF",
+            "1 绪论",
+            "正文内容。",
+            "参考文献",
+            "[1] 王五. 测试[J]. 2026.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.front_matter["chinese_abstract"] == "这是中文摘要正文。"
+    assert model.front_matter["keywords_cn"] == "光电系统，调制传递函数"
+    assert model.front_matter["title_en"] == (
+        "Research on Key Technologies of Performance Evaluation of Electro-Optical System"
+    )
+    assert model.front_matter["author_en"] == "CUI Run-hao"
+    assert model.front_matter["tutor_en"] == "TANG Di-yin"
+    assert model.front_matter["english_abstract"] == "This is the English abstract."
+    assert model.front_matter["keywords_en"] == "electro-optical system, MTF"
+
+
 def test_skips_normalized_toc_entries_with_plain_page_numbers(tmp_path):
     source = tmp_path / "normalized-toc.docx"
     work_dir = tmp_path / "work"

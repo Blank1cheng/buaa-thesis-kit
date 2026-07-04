@@ -62,7 +62,7 @@ def inspect_docx_output(
         result.blocking_items.append(f"word_output_unreadable: {exc}")
         return result
 
-    visible_text = _document_visible_text(document)
+    visible_text = _merge_visible_text(_document_visible_text(document), str(package_info["document_text"]))
     compact_text = _compact_text(visible_text)
     editable_chars = len(compact_text)
     body_snippets = _normalized_body_snippets(required_body_snippets or [])
@@ -80,7 +80,9 @@ def inspect_docx_output(
         "body_snippet_hits": body_snippet_hits,
     }
 
-    if require_spine and not _contains_any(visible_text, SPINE_MARKERS):
+    if require_spine and not (
+        _contains_any(visible_text, SPINE_MARKERS) or int(package_info["vertical_spine_count"]) > 0
+    ):
         result.blocking_items.append("spine_missing: authoritative Word output has no book spine marker.")
 
     _inspect_required_editable_text(
@@ -193,14 +195,16 @@ def _inspect_required_editable_body_text(
     )
 
 
-def _inspect_docx_package(path: Path) -> dict[str, int]:
+def _inspect_docx_package(path: Path) -> dict[str, int | str]:
     with zipfile.ZipFile(path) as package:
         names = package.namelist()
         document_xml = package.read("word/document.xml").decode("utf-8", errors="replace")
     drawing_sizes = _drawing_sizes(document_xml)
     return {
+        "document_text": _xml_visible_text(document_xml),
         "media_count": sum(1 for name in names if name.startswith("word/media/")),
         "drawing_count": document_xml.count("<w:drawing"),
+        "vertical_spine_count": _vertical_spine_count(document_xml),
         "page_screenshot_drawing_count": sum(
             1 for width, height in drawing_sizes if _looks_like_page_screenshot(width, height)
         ),
@@ -243,6 +247,34 @@ def _looks_like_page_screenshot(width_in: float, height_in: float) -> bool:
     long_edge = max(width_in, height_in)
     short_edge = min(width_in, height_in)
     return long_edge >= PAGE_SCREENSHOT_MIN_HEIGHT_IN and short_edge >= PAGE_SCREENSHOT_MIN_WIDTH_IN
+
+
+def _xml_visible_text(document_xml: str) -> str:
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError:
+        return ""
+    namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    return "\n".join(node.text or "" for node in root.findall(".//w:t", namespaces))
+
+
+def _vertical_spine_count(document_xml: str) -> int:
+    count = len(re.findall(r"<w:textDirection\b[^>]*w:val=\"tbRl\"", document_xml))
+    if "BUAA_VERTICAL_SPINE" in document_xml and count == 0:
+        return 1
+    return count
+
+
+def _merge_visible_text(*parts: str) -> str:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for line in str(part or "").splitlines():
+            if not line or line in seen:
+                continue
+            merged.append(line)
+            seen.add(line)
+    return "\n".join(merged)
 
 
 def _document_visible_text(document) -> str:

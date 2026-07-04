@@ -389,7 +389,9 @@ def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_scre
     assert any("ocr" in item.lower() for item in report["manual_review"])
     with zipfile.ZipFile(output / "thesis.docx") as docx_zip:
         document_xml = docx_zip.read("word/document.xml").decode("utf-8")
-    assert "<w:drawing" not in document_xml
+        package_names = docx_zip.namelist()
+    assert report["editability"]["page_screenshot_drawing_count"] == 0
+    assert not any("pdf-page" in name for name in package_names)
     assert "[Figure inserted]" not in document_xml
     assert "OCR/manual transcription required" not in document_xml
     tex = (output / "thesis.tex").read_text(encoding="utf-8")

@@ -7,6 +7,7 @@ from docx import Document
 from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.figure_table_acceptance import inspect_figure_tables
+from buaa_thesis_kit.front_matter_renderer import SPINE_XML_MARKER
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata, ThesisModel
 from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
@@ -170,7 +171,10 @@ def _source_has_spine(source: Path | None) -> bool:
 
 
 def _document_has_spine(document) -> bool:
-    return any(_text_has_spine_marker(paragraph.text) for paragraph in document.paragraphs)
+    if any(_text_has_spine_marker(paragraph.text) for paragraph in document.paragraphs):
+        return True
+    document_xml = document._element.xml
+    return SPINE_XML_MARKER in document_xml or 'w:textDirection w:val="tbRl"' in document_xml
 
 
 def _text_has_spine_marker(text: str) -> bool:
