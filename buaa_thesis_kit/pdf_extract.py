@@ -18,16 +18,15 @@ from buaa_thesis_kit.models import (
     ThesisModel,
 )
 from buaa_thesis_kit.latex_to_omml import latex_to_omml
+from buaa_thesis_kit.structure_parse import (
+    PdfTextLine as PdfLine,
+    extract_equations_from_sections,
+    parse_pdf_structure,
+    write_structure_markdown,
+)
 
 
 SOURCE_PDF_NAME = "source.pdf"
-
-
-@dataclass(frozen=True)
-class PdfLine:
-    index: int
-    page: int
-    text: str
 
 
 @dataclass(frozen=True)
@@ -163,11 +162,10 @@ def extract_pdf_model(
         line_index = 0
         for page_index in range(document.page_count):
             page = document.load_page(page_index)
-            page_text = _page_text(page)
-            if page_text:
-                for text in page_text:
-                    lines.append(PdfLine(index=line_index, page=page_index + 1, text=text))
-                    line_index += 1
+            page_lines = _page_text_lines(page, page_index + 1, line_index)
+            if page_lines:
+                lines.extend(page_lines)
+                line_index = page_lines[-1].index + 1
                 model.figures.extend(_extract_page_figures(page, work, page_index + 1))
             else:
                 figure = _render_page_image(page, work, page_index + 1)
@@ -191,11 +189,22 @@ def extract_pdf_model(
 
         if lines:
             model.metadata = _extract_metadata(lines)
-            model.sections, model.references = _extract_content(lines)
+            parsed = parse_pdf_structure(lines, source_file=SOURCE_PDF_NAME)
+            model.front_matter = parsed.front_matter
+            model.sections = parsed.sections
+            model.references = parsed.references
+            model.equations.extend(parsed.equations)
             model.sections, model.tables = _extract_tables_from_sections(model.sections)
-            model.sections, model.equations = _extract_equations_from_sections(model.sections)
+            model.sections, extracted_equations = extract_equations_from_sections(
+                model.sections,
+                source_file=SOURCE_PDF_NAME,
+                starting_number=len(model.equations) + 1,
+            )
+            model.equations.extend(extracted_equations)
+            write_structure_markdown(parsed, work / "pdf-structured-extraction.md")
+            model.extraction_warnings.extend(_layout_parse_warnings(parsed, len(lines)))
             model.extraction_warnings.append(
-                "PDF input converted through text extraction; layout review required against the source PDF."
+                "PDF input converted through layout-aware text extraction; layout review required against the source PDF."
             )
         else:
             model.extraction_warnings.append(
@@ -222,10 +231,82 @@ def extract_pdf_model(
         document.close()
 
 
+def _page_text_lines(page, page_number: int, start_index: int) -> list[PdfLine]:
+    try:
+        layout = page.get_text("dict") or {}
+    except Exception:
+        return [
+            PdfLine(index=start_index + offset, page=page_number, text=text)
+            for offset, text in enumerate(_page_text(page))
+        ]
+
+    lines: list[PdfLine] = []
+    next_index = start_index
+    page_rect = getattr(page, "rect", None)
+    page_width = float(getattr(page_rect, "width", 0.0))
+    page_height = float(getattr(page_rect, "height", 0.0))
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for raw_line in block.get("lines", []):
+            spans = raw_line.get("spans", [])
+            text = _clean_text("".join(str(span.get("text", "")) for span in spans))
+            if not text:
+                continue
+            bbox = _bbox_tuple(raw_line.get("bbox")) or _bbox_tuple(block.get("bbox"))
+            first_span = spans[0] if spans else {}
+            try:
+                size = float(first_span.get("size", 0.0))
+            except (TypeError, ValueError):
+                size = 0.0
+            try:
+                flags = int(first_span.get("flags", 0))
+            except (TypeError, ValueError):
+                flags = 0
+            lines.append(
+                PdfLine(
+                    index=next_index,
+                    page=page_number,
+                    text=text,
+                    bbox=bbox,
+                    font=str(first_span.get("font", "")),
+                    size=size,
+                    flags=flags,
+                    page_width=page_width,
+                    page_height=page_height,
+                )
+            )
+            next_index += 1
+    if lines:
+        return lines
+    return [
+        PdfLine(index=start_index + offset, page=page_number, text=text)
+        for offset, text in enumerate(_page_text(page))
+    ]
+
+
 def _page_text(page) -> list[str]:
     raw = page.get_text("text") or ""
     lines = [_clean_text(line) for line in raw.splitlines()]
     return [line for line in lines if line]
+
+
+def _layout_parse_warnings(parsed, total_lines: int) -> list[str]:
+    warnings: list[str] = []
+    removed_header_footer = len(parsed.removed_header_footer_lines)
+    warnings.append(
+        "PDF layout line audit: "
+        f"total_lines={total_lines}, "
+        f"removed_header_footer={removed_header_footer}, "
+        f"removed_toc={parsed.removed_toc_line_count}, "
+        f"removed_field_codes={parsed.removed_field_code_line_count}."
+    )
+    if parsed.removed_field_code_line_count:
+        warnings.append(
+            "PDF field-code equation placeholders require manual review: "
+            f"{parsed.removed_field_code_line_count}."
+        )
+    return warnings
 
 
 def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:

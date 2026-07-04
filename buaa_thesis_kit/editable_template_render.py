@@ -165,6 +165,8 @@ def _append_spine_page(document, metadata: Metadata) -> None:
 def _append_model_content(document, model: ThesisModel) -> None:
     document.add_page_break()
     _add_abstracts(document, model)
+    if _has_abstracts(model) and model.sections:
+        document.add_page_break()
     rendered_figure_ids = _add_sections_with_page_breaks(
         document,
         _sections_without_pdf_placeholder_heading(model.sections),
@@ -279,6 +281,13 @@ def _sections_without_pdf_placeholder_heading(sections: list[ContentBlock]) -> l
         else:
             rendered.append(section)
     return rendered
+
+
+def _has_abstracts(model: ThesisModel) -> bool:
+    return any(
+        str(model.front_matter.get(key, "")).strip()
+        for key in ("chinese_abstract", "abstract_cn", "cn_abstract", "english_abstract", "abstract_en", "en_abstract")
+    )
 
 
 def _spine_values(metadata: Metadata) -> list[str]:

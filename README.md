@@ -53,6 +53,15 @@ output/
 PDF 输入的 `thesis.docx` 仍必须是可编辑 Word：封面、书脊、任务书和正文用模板文本渲染。
 页面截图只可作为 OCR 或人工复核证据，不进入最终 Word 正文。
 
+## 结构化抽取
+
+PDF 输入优先使用 layout-aware 文本抽取：从 `page.get_text("dict")` 读取每行文本的页码、
+坐标、字体和字号，再解析为 thesis model。页眉、页脚、单独页码和目录项不会进入 BODY；
+`摘    要`、`Abstract`、`关键词`、`Key Words` 进入 `front_matter`；目录由 Word/PDF
+渲染链路重建，不从源 PDF 复制成正文。疑似 Word 域代码残留，例如 `MERGEFORMAT`、`公式章`
+和 `下一章`，会转为公式复核项，不作为普通正文输出。调试时可用 `--keep-work` 查看临时
+`pdf-structured-extraction.md`，最终 `output/` 不保留该过程文件。
+
 ## 使用方法
 
 ```powershell
@@ -111,7 +120,8 @@ Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
 流水线会执行 `figure/table validation`：正文中的图题、表题和正文引用必须能匹配到对应图像或表格资产。
 `figure_caption_without_asset`、`table_caption_without_asset`、`figure_reference_without_asset`
 和 `table_reference_without_asset` 是阻断项，说明模板化输出可能漏图、漏表或错位。`duplicate_figure_number`
-和 `duplicate_table_number` 也是阻断项；无题注图片或无标题表格进入人工复核。
+和 `duplicate_table_number` 也是阻断项；同一图题下的多个图片资产按组合图处理，不视为重复编号。
+DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片资产；无题注图片或无标题表格进入人工复核。
 
 ## 报告状态
 

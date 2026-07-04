@@ -6,11 +6,11 @@
 
 ## 2. 结构识别
 
-按规则加载器读取章节、元数据、图表、公式、参考文献规则。先识别封面、任务书、声明、摘要、目录、正文、参考文献，再处理样式。章节边界不确定时，不要猜测移动大段内容，改为人工复核。
+按规则加载器读取章节、元数据、图表、公式、参考文献规则。先识别封面、任务书、声明、摘要、目录、正文、参考文献，再处理样式。PDF 输入必须保留每行文本的页码、坐标、字体和字号证据，先过滤页眉页脚、单独页码和目录项，再把 `摘    要`、`Abstract`、`关键词`、`Key Words` 放入 `front_matter`。`MERGEFORMAT`、`公式章`、`下一章` 等域代码残留不得进入普通正文，必须转为公式复核项。章节边界不确定时，不要猜测移动大段内容，改为人工复核。
 
 ## 3. 模板填充
 
-使用 `templates/buaa_undergraduate_thesis_template.docx` 生成权威 Word 输出，使用 `templates/buaa_undergraduate_thesis_template.tex` 生成辅助 TeX。PDF 输入也必须生成可编辑 Word：封面、书脊、任务书和正文由模板文本渲染，不得把整页 PDF 截图嵌入最终 Word。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
+使用 `templates/buaa_undergraduate_thesis_template.docx` 生成权威 Word 输出，使用 `templates/buaa_undergraduate_thesis_template.tex` 生成辅助 TeX。PDF 输入也必须生成可编辑 Word：封面、书脊、任务书和正文由模板文本渲染，不得把整页 PDF 截图嵌入最终 Word。中文摘要页使用 `摘    要` 和 `关键词：`，英文摘要页使用 `Abstract` 和 `Key Words:`，中英文摘要必须分页。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
 
 ## 4. 校验与报告
 
@@ -40,4 +40,4 @@ Every run must write an `Equation Ledger` entry for each detected equation. `edi
 
 ## 10. Figure/Table validation
 
-Every run must perform `figure/table validation` before acceptance. `figure_caption_without_asset`, `table_caption_without_asset`, `figure_reference_without_asset`, and `table_reference_without_asset` are blocking items because they indicate that a caption or body reference may have lost its editable image/table asset during template rendering. `duplicate_figure_number` and `duplicate_table_number` are also blocking items. Uncaptioned figure assets and untitled tables should remain in manual review until the caption/title can be reconciled.
+Every run must perform `figure/table validation` before acceptance. `figure_caption_without_asset`, `table_caption_without_asset`, `figure_reference_without_asset`, and `table_reference_without_asset` are blocking items because they indicate that a caption or body reference may have lost its editable image/table asset during template rendering. `duplicate_figure_number` and `duplicate_table_number` are also blocking items, except that multiple image assets with the same normalized figure number and the same caption are treated as one composite figure. For DOCX input, agents should bind a picture to the nearest following `图/Fig.` caption when possible. Uncaptioned figure assets and untitled tables should remain in manual review until the caption/title can be reconciled.

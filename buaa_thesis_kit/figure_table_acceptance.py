@@ -136,9 +136,14 @@ def _inspect_reference_without_target(
 
 def _numbered_assets(assets: Iterable[AssetItem], pattern: re.Pattern[str]) -> list[str]:
     numbers: list[str] = []
+    seen_captioned_assets: set[tuple[str, str]] = set()
     for asset in assets:
         marker = _first_number(asset.caption, pattern)
         if marker:
+            key = (marker, _clean_text(asset.caption).casefold())
+            if key in seen_captioned_assets:
+                continue
+            seen_captioned_assets.add(key)
             numbers.append(marker)
     return numbers
 

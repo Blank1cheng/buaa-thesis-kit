@@ -386,11 +386,23 @@ def _append_missing_abstracts(document, model: ThesisModel, represented_placehol
     abstract_cn = _front_matter_value(model, "chinese_abstract", "abstract_cn", "cn_abstract")
     abstract_en = _front_matter_value(model, "english_abstract", "abstract_en", "en_abstract")
     if abstract_cn and "ABSTRACT_CN" not in represented_placeholders:
-        _add_heading(document, "Chinese Abstract", level=1)
+        _add_front_matter_heading(document, "摘    要")
         _add_text_paragraphs(document, abstract_cn)
+        _add_keywords(
+            document,
+            "关键词：",
+            _front_matter_value(model, "keywords_cn", "chinese_keywords", "cn_keywords", "keywords"),
+        )
     if abstract_en and "ABSTRACT_EN" not in represented_placeholders:
-        _add_heading(document, "English Abstract", level=1)
+        if abstract_cn:
+            document.add_page_break()
+        _add_front_matter_heading(document, "Abstract")
         _add_text_paragraphs(document, abstract_en)
+        _add_keywords(
+            document,
+            "Key Words: ",
+            _front_matter_value(model, "keywords_en", "english_keywords", "en_keywords", "keywords"),
+        )
 
 
 def _append_block(document, token: str, model: ThesisModel) -> None:
@@ -443,11 +455,23 @@ def _add_abstracts(document, model: ThesisModel) -> None:
     abstract_cn = _front_matter_value(model, "chinese_abstract", "abstract_cn", "cn_abstract")
     abstract_en = _front_matter_value(model, "english_abstract", "abstract_en", "en_abstract")
     if abstract_cn:
-        _add_heading(document, "Chinese Abstract", level=1)
+        _add_front_matter_heading(document, "摘    要")
         _add_text_paragraphs(document, abstract_cn)
+        _add_keywords(
+            document,
+            "关键词：",
+            _front_matter_value(model, "keywords_cn", "chinese_keywords", "cn_keywords", "keywords"),
+        )
     if abstract_en:
-        _add_heading(document, "English Abstract", level=1)
+        if abstract_cn:
+            document.add_page_break()
+        _add_front_matter_heading(document, "Abstract")
         _add_text_paragraphs(document, abstract_en)
+        _add_keywords(
+            document,
+            "Key Words: ",
+            _front_matter_value(model, "keywords_en", "english_keywords", "en_keywords", "keywords"),
+        )
 
 
 def _add_sections(document, sections: Iterable[ContentBlock]) -> None:
@@ -885,6 +909,19 @@ def _add_heading(document, text: str, level: int = 1) -> None:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for run in paragraph.runs:
         run.bold = True
+
+
+def _add_front_matter_heading(document, text: str) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run(text)
+    run.bold = True
+
+
+def _add_keywords(document, label: str, keywords: str) -> None:
+    value = str(keywords or "").strip()
+    if value:
+        document.add_paragraph(f"{label}{value}")
 
 
 def _add_text_paragraphs(document, text: str) -> None:

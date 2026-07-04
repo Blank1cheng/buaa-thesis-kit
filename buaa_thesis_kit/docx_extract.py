@@ -58,6 +58,11 @@ COVER_TITLE_STOP_LABELS = {
     "指导老师",
 }
 RELATIONSHIP_ID_ATTR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+RELATIONSHIP_EMBED_ATTR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+DOCX_FIGURE_CAPTION_RE = re.compile(
+    r"^\s*(?:图\s*\d+(?:[.\-]\d+)*|fig(?:ure)?\.?\s*\d+(?:[.\-]\d+)*)\s+.+",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -556,11 +561,12 @@ def _split_content(
 
         if mode == "references":
             if _is_reference_entry(text) or _detect_heading(block) is None:
+                reference_text = _normalize_reference_entry_text(text, len(references) + 1)
                 references.append(
                     ContentBlock(
                         id=f"ref-{len(references) + 1}",
                         type="reference",
-                        text=text,
+                        text=reference_text,
                         source=_source("docx-reference", block.index, 0.86, False),
                     )
                 )
@@ -630,6 +636,7 @@ def _extract_media(source_copy: Path, work_dir: Path) -> tuple[list[AssetItem], 
     total_media_bytes = 0
     try:
         with zipfile.ZipFile(source_copy) as docx_zip:
+            captions_by_part = _image_captions_by_part_name(docx_zip)
             media_infos = [
                 info
                 for info in docx_zip.infolist()
@@ -651,6 +658,7 @@ def _extract_media(source_copy: Path, work_dir: Path) -> tuple[list[AssetItem], 
                         id=f"img-{len(figures) + 1}",
                         type="image",
                         path=str(destination.resolve()),
+                        caption=captions_by_part.get(info.filename, ""),
                         source=_source("docx-media", None, 0.88, True),
                         requires_review=True,
                     )
@@ -658,6 +666,57 @@ def _extract_media(source_copy: Path, work_dir: Path) -> tuple[list[AssetItem], 
     except zipfile.BadZipFile:
         return figures, warnings
     return figures, warnings
+
+
+def _image_captions_by_part_name(docx_zip: zipfile.ZipFile) -> dict[str, str]:
+    if "word/document.xml" not in docx_zip.namelist():
+        return {}
+    try:
+        root = etree.fromstring(docx_zip.read("word/document.xml"))
+    except etree.XMLSyntaxError:
+        return {}
+
+    relationships = _document_relationship_targets(docx_zip)
+    captions: dict[str, str] = {}
+    paragraphs = root.xpath("//*[local-name()='body']/*[local-name()='p']")
+    for index, paragraph in enumerate(paragraphs):
+        relationship_ids = _paragraph_image_relationship_ids(paragraph)
+        if not relationship_ids:
+            continue
+        caption = _next_figure_caption(paragraphs, index)
+        if not caption:
+            continue
+        for relationship_id in relationship_ids:
+            target = relationships.get(relationship_id)
+            if not target:
+                continue
+            captions[_word_part_name(target)] = caption
+    return captions
+
+
+def _paragraph_image_relationship_ids(paragraph) -> list[str]:
+    ids: list[str] = []
+    for node in paragraph.xpath(".//*[local-name()='blip' or local-name()='imagedata']"):
+        relationship_id = node.get(RELATIONSHIP_EMBED_ATTR) or node.get(RELATIONSHIP_ID_ATTR)
+        if relationship_id:
+            ids.append(relationship_id)
+    return ids
+
+
+def _next_figure_caption(paragraphs: list, image_paragraph_index: int) -> str:
+    for paragraph in paragraphs[image_paragraph_index + 1 : image_paragraph_index + 5]:
+        if _paragraph_image_relationship_ids(paragraph):
+            return ""
+        text = _xml_paragraph_text(paragraph)
+        if not text:
+            continue
+        if DOCX_FIGURE_CAPTION_RE.match(text):
+            return text
+    return ""
+
+
+def _xml_paragraph_text(paragraph) -> str:
+    return _clean_text("".join(paragraph.xpath(".//*[local-name()='t']/text()")))
 
 
 def _unique_media_destination(image_dir: Path, original_name: str, used_names: set[str]) -> Path:
@@ -963,6 +1022,13 @@ def _is_references_heading(text: str) -> bool:
 
 def _is_reference_entry(text: str) -> bool:
     return bool(re.match(r"^\[\d+\]", text))
+
+
+def _normalize_reference_entry_text(text: str, ordinal: int) -> str:
+    value = _clean_text(text)
+    if _is_reference_entry(value):
+        return value
+    return f"[{ordinal}] {value}"
 
 
 def _is_appendix_heading(text: str) -> bool:

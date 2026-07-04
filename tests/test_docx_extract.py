@@ -326,6 +326,53 @@ def test_extracts_images_to_work_dir_and_marks_review(tmp_path):
     assert model.status == "needs_review"
 
 
+def test_extracts_docx_image_caption_from_following_figure_caption_paragraph(tmp_path):
+    source = tmp_path / "captioned-image.docx"
+    work_dir = tmp_path / "work"
+    image_path = tmp_path / "tiny.png"
+    image_path.write_bytes(TINY_PNG)
+    doc = Document()
+    doc.add_paragraph("1 Introduction")
+    doc.add_paragraph("Before figure paragraph.")
+    doc.add_picture(str(image_path))
+    caption = doc.add_paragraph("图1.1 系统架构")
+    caption.style = doc.styles["Normal"]
+    doc.add_paragraph("After figure paragraph.")
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert len(model.figures) == 1
+    assert model.figures[0].caption == "图1.1 系统架构"
+    assert model.figures[0].requires_review is True
+    assert any("图1.1 系统架构" in section.text for section in model.sections)
+
+
+def test_docx_reference_entries_without_visible_numbers_are_numbered_by_order(tmp_path):
+    source = tmp_path / "auto-numbered-references.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "Title: Reference Thesis",
+            "Student Name: Zhang San",
+            "Student ID: 20370001",
+            "1 Introduction",
+            "Body cites [2].",
+            "References",
+            "Wang Wu. First reference. 2026.",
+            "Li Si. Second reference. 2026.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert [reference.text for reference in model.references] == [
+        "[1] Wang Wu. First reference. 2026.",
+        "[2] Li Si. Second reference. 2026.",
+    ]
+
+
 def test_detects_omml_and_embedded_equations(tmp_path):
     source = tmp_path / "equations.docx"
     _save_docx(

@@ -36,6 +36,22 @@ def test_inspect_figure_tables_blocks_duplicate_figure_numbers():
     assert "duplicate_figure_number: Figure 1.1" in result.blocking_items
 
 
+def test_inspect_figure_tables_allows_multiple_assets_for_same_captioned_figure():
+    model = ThesisModel(
+        sections=[
+            ContentBlock(id="section-1", type="chapter", text="图1.3 实验目标靶板")
+        ],
+        figures=[
+            AssetItem(id="fig-1a", type="image", path="figure-a.png", caption="图1.3 实验目标靶板"),
+            AssetItem(id="fig-1b", type="image", path="figure-b.png", caption="图1.3 实验目标靶板"),
+        ],
+    )
+
+    result = inspect_figure_tables(model)
+
+    assert not any("duplicate_figure_number" in item for item in result.blocking_items)
+
+
 def test_inspect_figure_tables_marks_uncaptioned_figure_for_review():
     model = ThesisModel(
         figures=[AssetItem(id="fig-1", type="image", path="figure.png", caption="")]

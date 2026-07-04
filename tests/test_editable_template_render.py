@@ -217,6 +217,45 @@ def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp
         assert '<w:br w:type="page"' in previous_xml
 
 
+def test_render_editable_buaa_docx_uses_buaa_abstract_labels_and_keywords(tmp_path):
+    model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Abstract Label Thesis",
+            student_name="Zhang San",
+            student_id="20370001",
+            college="Automation College",
+            major="Automation",
+            advisor="Li Si",
+            date="2026-06",
+            classification="TP273",
+        ),
+        front_matter={
+            "chinese_abstract": "这是中文摘要正文。",
+            "keywords_cn": "光电系统，调制传递函数",
+            "english_abstract": "This is the English abstract.",
+            "keywords_en": "electro-optical system, MTF",
+        },
+        sections=[ContentBlock(id="body", type="chapter", title="1 Introduction", text="Body text.", level=1)],
+    )
+    output = tmp_path / "abstract-labels.docx"
+
+    render_editable_buaa_docx(TEMPLATE, model, output)
+
+    document = Document(str(output))
+    visible_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "摘    要" in visible_text
+    assert "关键词：光电系统，调制传递函数" in visible_text
+    assert "Abstract" in visible_text
+    assert "Key Words: electro-optical system, MTF" in visible_text
+    assert "Chinese Abstract" not in visible_text
+    assert "English Abstract" not in visible_text
+    paragraph_texts = [paragraph.text for paragraph in document.paragraphs]
+    english_index = paragraph_texts.index("Abstract")
+    assert '<w:br w:type="page"' in document.paragraphs[english_index - 1]._p.xml
+    body_index = paragraph_texts.index("1 Introduction")
+    assert '<w:br w:type="page"' in document.paragraphs[body_index - 1]._p.xml
+
+
 def test_render_editable_buaa_docx_inlines_captioned_figures_near_body_caption(tmp_path):
     image_path = tmp_path / "figure.png"
     image_path.write_bytes(TINY_PNG)
