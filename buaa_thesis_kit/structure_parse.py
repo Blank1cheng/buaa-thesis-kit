@@ -201,10 +201,8 @@ def _is_header_footer_line(line: PdfTextLine) -> bool:
     normalized = _compact(text)
     if normalized.startswith("北京航空航天大学毕业设计") or normalized.startswith("北京航空航天大学本科毕业设计"):
         return True
-    if _is_page_number_line(text):
-        return True
     if line.bbox is None or not line.page_height:
-        return False
+        return _is_explicit_page_footer_text(text)
     y0 = line.bbox[1]
     y1 = line.bbox[3]
     top_cutoff = line.page_height * HEADER_FOOTER_TOP_RATIO
@@ -223,6 +221,10 @@ def _is_page_number_line(text: str) -> bool:
         or re.fullmatch(r"[IVXLCDM]{1,8}", value, flags=re.IGNORECASE)
         or re.fullmatch(r"第\s*(?:\d+|[IVXLCDM]+)\s*页", value, flags=re.IGNORECASE)
     )
+
+
+def _is_explicit_page_footer_text(text: str) -> bool:
+    return bool(re.fullmatch(r"第\s*(?:\d+|[IVXLCDM]+)\s*页", _clean_text(text), flags=re.IGNORECASE))
 
 
 def _abstract_heading_key(text: str) -> str:
@@ -474,24 +476,63 @@ def _merge_split_headings(lines: list[PdfTextLine]) -> list[PdfTextLine]:
         current = lines[index]
         following = lines[index + 1] if index + 1 < len(lines) else None
         if following is not None and _compact(current.text + following.text) in {"摘要", "目录"}:
-            merged.append(
-                PdfTextLine(
-                    index=current.index,
-                    page=current.page,
-                    text=_compact(current.text + following.text),
-                    bbox=_merged_bbox(current.bbox, following.bbox),
-                    font=current.font,
-                    size=max(current.size, following.size),
-                    flags=current.flags,
-                    page_width=current.page_width or following.page_width,
-                    page_height=current.page_height or following.page_height,
-                )
-            )
+            merged.append(_merged_line(current, following, _compact(current.text + following.text)))
+            index += 2
+            continue
+        if following is not None and _looks_like_split_numbered_heading(current, following):
+            merged.append(_merged_line(current, following, f"{_clean_text(current.text)} {_clean_text(following.text)}"))
             index += 2
             continue
         merged.append(current)
         index += 1
     return merged
+
+
+def _looks_like_split_numbered_heading(current: PdfTextLine, following: PdfTextLine) -> bool:
+    number = _clean_text(current.text)
+    title = _clean_text(following.text)
+    if current.page != following.page:
+        return False
+    if not re.fullmatch(r"[1-9](?:\.\d+){0,2}", number):
+        return False
+    if not title or _is_page_number_line(title) or _looks_like_toc_entry(title):
+        return False
+    if re.search(r"[。；;]|\.$", title):
+        return False
+    merged_title = f"{number} {title}"
+    if not _looks_like_heading(merged_title):
+        return False
+    return _lines_are_adjacent_heading_fragments(current, following)
+
+
+def _lines_are_adjacent_heading_fragments(left: PdfTextLine, right: PdfTextLine) -> bool:
+    if left.bbox is not None and right.bbox is not None:
+        vertical_gap = right.bbox[1] - left.bbox[3]
+        if vertical_gap < -4 or vertical_gap > 28:
+            return False
+        left_center = (left.bbox[0] + left.bbox[2]) / 2
+        right_center = (right.bbox[0] + right.bbox[2]) / 2
+        if left.page_width and abs(left_center - right_center) > left.page_width * 0.25:
+            return False
+    if left.size and right.size and abs(left.size - right.size) > 2.5:
+        return False
+    if left.font and right.font and left.font != right.font:
+        return False
+    return True
+
+
+def _merged_line(left: PdfTextLine, right: PdfTextLine, text: str) -> PdfTextLine:
+    return PdfTextLine(
+        index=left.index,
+        page=left.page,
+        text=text,
+        bbox=_merged_bbox(left.bbox, right.bbox),
+        font=left.font,
+        size=max(left.size, right.size),
+        flags=left.flags,
+        page_width=left.page_width or right.page_width,
+        page_height=left.page_height or right.page_height,
+    )
 
 
 def _merged_bbox(

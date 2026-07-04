@@ -259,6 +259,39 @@ def test_skips_normalized_toc_entries_with_plain_page_numbers(tmp_path):
     assert [section.title for section in model.sections] == ["1 绪论", "1.1 Background"]
 
 
+def test_recovers_auto_numbered_heading_titles_and_keeps_chapter_summary_as_body(tmp_path):
+    source = tmp_path / "auto-numbered-headings.docx"
+    work_dir = tmp_path / "work"
+    doc = Document()
+    doc.add_paragraph("中文题目：自动编号测试")
+    doc.add_paragraph("学生姓名：张三")
+    doc.add_paragraph("学号：20370001")
+    doc.add_paragraph("绪论", style="Heading 1")
+    doc.add_paragraph("1.1 课题来源与背景", style="Heading 2")
+    doc.add_paragraph("背景正文。")
+    doc.add_paragraph("1.5 论文章节安排", style="Heading 2")
+    doc.add_paragraph("论文组织结构如下：")
+    doc.add_paragraph("第一章 绪论。本章介绍了研究背景。")
+    doc.add_paragraph("第二章 基于实拍图像的调制传递函数计算方法。本章介绍方法。")
+    doc.add_paragraph("基于实拍图像的调制传递函数计算方法", style="Heading 1")
+    doc.add_paragraph("2.1 性能评估指标", style="Heading 2")
+    doc.add_paragraph("第二章正文。")
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert [section.title for section in model.sections] == [
+        "1 绪论",
+        "1.1 课题来源与背景",
+        "1.5 论文章节安排",
+        "2 基于实拍图像的调制传递函数计算方法",
+        "2.1 性能评估指标",
+    ]
+    section_15 = model.sections[2]
+    assert "第一章 绪论。本章介绍了研究背景。" in section_15.text
+    assert "第二章 基于实拍图像的调制传递函数计算方法。本章介绍方法。" in section_15.text
+
+
 def test_body_table_cells_are_not_duplicated_into_section_text(tmp_path):
     source = tmp_path / "body-table.docx"
     work_dir = tmp_path / "work"

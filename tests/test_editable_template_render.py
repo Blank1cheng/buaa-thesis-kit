@@ -183,9 +183,7 @@ def test_render_editable_buaa_docx_preserves_omml_equations_as_word_math(tmp_pat
     assert "[Equation requires review]" not in document_xml
 
 
-def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp_path):
-    declaration = "\u672c\u4eba\u58f0\u660e"
-    chinese_abstract = "\u6458\u8981"
+def test_render_editable_buaa_docx_generates_front_matter_and_toc_before_body(tmp_path):
     model = ThesisModel(
         metadata=Metadata(
             title_cn="Paged Front Matter Thesis",
@@ -197,10 +195,11 @@ def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp
             date="2026-06",
             classification="TP273",
         ),
+        front_matter={
+            "chinese_abstract": "Chinese abstract body.",
+            "english_abstract": "English abstract body.",
+        },
         sections=[
-            ContentBlock(id="task", type="section", title="", text="Task book body."),
-            ContentBlock(id="declare", type="section", title=declaration, text="Declaration body."),
-            ContentBlock(id="abstract-cn", type="section", title=chinese_abstract, text="Chinese abstract body."),
             ContentBlock(id="body", type="chapter", title="1 Introduction", text="Body text.", level=1),
         ],
     )
@@ -211,10 +210,15 @@ def test_render_editable_buaa_docx_starts_front_matter_sections_on_new_pages(tmp
     document = Document(str(output))
     paragraphs = list(document.paragraphs)
     paragraph_texts = [paragraph.text for paragraph in paragraphs]
-    for marker in (declaration, chinese_abstract, "1 Introduction"):
+    for marker in ("本科毕业设计（论文）任务书", "本人声明", "摘    要", "Abstract", "目录", "1 Introduction"):
         index = paragraph_texts.index(marker)
         previous_xml = paragraphs[index - 1]._p.xml
         assert '<w:br w:type="page"' in previous_xml
+    assert paragraph_texts.index("本科毕业设计（论文）任务书") < paragraph_texts.index("本人声明")
+    assert paragraph_texts.index("本人声明") < paragraph_texts.index("摘    要")
+    assert paragraph_texts.index("摘    要") < paragraph_texts.index("Abstract")
+    assert paragraph_texts.index("Abstract") < paragraph_texts.index("目录")
+    assert paragraph_texts.index("目录") < paragraph_texts.index("1 Introduction")
 
 
 def test_render_editable_buaa_docx_uses_buaa_abstract_labels_and_keywords(tmp_path):

@@ -117,9 +117,11 @@ def _export_with_word_com(docx_path: Path, pdf_path: Path) -> tuple[bool, str]:
         word.DisplayAlerts = 0
         document = word.Documents.Open(
             str(docx_path.resolve()),
-            ReadOnly=True,
+            ReadOnly=False,
             AddToRecentFiles=False,
         )
+        _update_word_fields(document)
+        document.Save()
         document.ExportAsFixedFormat(
             OutputFileName=str(pdf_path.resolve()),
             ExportFormat=17,
@@ -144,6 +146,18 @@ def _export_with_word_com(docx_path: Path, pdf_path: Path) -> tuple[bool, str]:
                 pythoncom.CoUninitialize()
             except Exception:
                 pass
+
+
+def _update_word_fields(document) -> None:
+    try:
+        document.Fields.Update()
+    except Exception:
+        pass
+    try:
+        for index in range(1, document.TablesOfContents.Count + 1):
+            document.TablesOfContents(index).Update()
+    except Exception:
+        pass
 
 
 def _export_with_libreoffice(docx_path: Path, pdf_path: Path) -> tuple[bool, str]:

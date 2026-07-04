@@ -18,7 +18,7 @@ from buaa_thesis_kit.models import AssetItem, ContentBlock, EquationItem, Thesis
 
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
-BLOCK_PLACEHOLDERS = {"BODY", "REFERENCES", "TABLES", "FIGURES", "EQUATIONS", "APPENDICES"}
+BLOCK_PLACEHOLDERS = {"BODY", "REFERENCES", "TABLES", "FIGURES", "EQUATIONS", "APPENDICES", "TOC"}
 SUPPORTED_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 OCR_EVIDENCE_FIGURE_TYPES = {"pdf-page-image"}
 EQUATION_OBJECT_TOKEN_PREFIX = "__BUAA_EDITABLE_EQUATION_OBJECT__"
@@ -150,6 +150,8 @@ def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedIte
 def _render_block_placeholder(token: str, model: ThesisModel) -> list[RenderedItem]:
     if token == "BODY":
         return _render_sections(model.sections)
+    if token == "TOC":
+        return []
     if token == "REFERENCES":
         return _render_references(model.references)
     if token == "TABLES":
@@ -328,8 +330,10 @@ def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem)
         picture = _insert_paragraph_after_anchor(paragraph, anchor)
         try:
             picture.add_run().add_picture(str(image_path), width=Inches(5.5))
-            label = _insert_paragraph_after_anchor(paragraph, anchor)
-            _replace_paragraph_text(label, f"[Figure inserted] {caption}".strip())
+            if caption:
+                label = _insert_paragraph_after_anchor(paragraph, picture._p)
+                _replace_paragraph_text(label, caption)
+                return label._p
             return picture._p
         except Exception:
             _replace_paragraph_text(picture, _figure_review_text(figure))
@@ -366,6 +370,7 @@ def _replace_paragraph_text(paragraph: Paragraph, text: str) -> None:
 def _build_fallback_document(document, model: ThesisModel) -> None:
     _add_title_block(document, model)
     _add_abstracts(document, model)
+    _add_table_of_contents(document, model.sections)
     _add_sections(document, model.sections)
     _add_tables(document, model.tables)
     _add_figures(document, model.figures)
@@ -508,7 +513,8 @@ def _add_figures(document, figures: Iterable[AssetItem]) -> None:
             picture = document.add_paragraph()
             try:
                 picture.add_run().add_picture(str(image_path), width=Inches(5.5))
-                document.add_paragraph(f"[Figure inserted] {caption}".strip())
+                if caption:
+                    document.add_paragraph(caption)
             except Exception:
                 _replace_paragraph_text(picture, _figure_review_text(figure))
         else:
@@ -528,7 +534,7 @@ def _add_references(document, references: Iterable[ContentBlock]) -> None:
     references = list(references)
     if not references:
         return
-    _add_heading(document, "References", level=1)
+    _add_heading(document, "参考文献", level=1)
     for item in _render_references(references):
         document.add_paragraph(item.text)
 
@@ -602,8 +608,6 @@ def _apply_equation(paragraph: Paragraph, equation: EquationItem) -> None:
         try:
             paragraph.clear()
             paragraph.add_run().add_picture(str(preview_path), width=Inches(4.8))
-            label = _insert_paragraph_after(paragraph)
-            _replace_paragraph_text(label, f"[Equation preview inserted] {_equation_caption(equation)}".strip())
             return
         except Exception:
             pass
@@ -842,12 +846,11 @@ def _serialize_xml(root) -> bytes:
 
 
 def _equation_review_text(equation: EquationItem) -> str:
-    content = equation.latex or equation.text or "manual conversion required"
-    if equation.preview_path:
-        content = f"{content} preview={Path(equation.preview_path).name}"
-    number = f" {equation.number}" if equation.number else ""
-    prefix = "[Equation requires review]" if equation.requires_review else "[Equation]"
-    return f"{prefix}{number} {content}".strip()
+    page = ""
+    if equation.source is not None and equation.source.page_hint is not None:
+        page = f"source_page={equation.source.page_hint}, "
+    number = f"{equation.number}，" if equation.number else ""
+    return f"[公式缺失：{number}{page}needs_review]"
 
 
 def _equation_caption(equation: EquationItem) -> str:
@@ -877,14 +880,17 @@ def _parse_table_rows(text: str) -> list[list[str]]:
 
 
 def _figure_caption(figure: AssetItem) -> str:
-    parts = [figure.caption, figure.path]
-    return " ".join(part for part in parts if part)
+    return str(figure.caption or figure.id or "").strip()
 
 
 def _figure_review_text(figure: AssetItem) -> str:
     if _is_ocr_evidence_figure(figure):
-        return f"[OCR evidence requires transcription] {_figure_caption(figure)}".strip()
-    return f"[Figure requires review] {_figure_caption(figure)}".strip()
+        page = ""
+        if figure.source is not None and figure.source.page_hint is not None:
+            page = f"source_page={figure.source.page_hint}, "
+        return f"[OCR文字缺失：{page}需人工确认]"
+    caption = _figure_caption(figure) or "未识别图题"
+    return f"[图像缺失：{caption}，需人工确认]"
 
 
 def _is_supported_existing_image(path: Path) -> bool:
@@ -900,7 +906,11 @@ def _is_resolved_ocr_evidence_figure(figure: AssetItem) -> bool:
 
 
 def _heading_style(level: int) -> str:
-    return "Heading 1" if level <= 1 else "Heading 2"
+    if level <= 1:
+        return "Heading 1"
+    if level == 2:
+        return "Heading 2"
+    return "Heading 3"
 
 
 def _add_heading(document, text: str, level: int = 1) -> None:
@@ -916,6 +926,30 @@ def _add_front_matter_heading(document, text: str) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run(text)
     run.bold = True
+
+
+def _add_table_of_contents(document, sections: Iterable[ContentBlock]) -> None:
+    section_list = list(sections)
+    if not section_list:
+        return
+    document.add_page_break()
+    _add_front_matter_heading(document, "目录")
+    _add_toc_field(document.add_paragraph())
+
+
+def _add_toc_field(paragraph: Paragraph) -> None:
+    run = paragraph.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    for node in (begin, instr, separate, end):
+        run._r.append(node)
 
 
 def _add_keywords(document, label: str, keywords: str) -> None:

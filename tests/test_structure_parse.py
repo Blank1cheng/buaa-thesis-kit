@@ -99,3 +99,30 @@ def test_parse_pdf_structure_filters_layout_header_footer_lines():
     ]
     assert parsed.sections[0].title == "1 绪论"
     assert parsed.sections[0].text == "正文内容。"
+
+
+def test_parse_pdf_structure_merges_split_chapter_number_and_title_in_body_region():
+    parsed = parse_pdf_structure(
+        [
+            _line(0, "1", page=6, y0=120.0, y1=136.0),
+            _line(1, "绪论", page=6, y0=138.0, y1=154.0),
+            _line(2, "正文第一段。", page=6, y0=180.0, y1=198.0),
+        ]
+    )
+
+    assert [section.title for section in parsed.sections] == ["1 绪论"]
+    assert parsed.sections[0].text == "正文第一段。"
+    assert parsed.removed_header_footer_lines == []
+
+
+def test_parse_pdf_structure_removes_standalone_page_number_only_in_footer_region():
+    parsed = parse_pdf_structure(
+        [
+            _line(0, "1", page=6, y0=805.0, y1=822.0),
+            _line(1, "1 绪论", page=7, y0=120.0, y1=138.0),
+            _line(2, "正文第一段。", page=7, y0=160.0, y1=178.0),
+        ]
+    )
+
+    assert [line.text for line in parsed.removed_header_footer_lines] == ["1"]
+    assert parsed.sections[0].title == "1 绪论"

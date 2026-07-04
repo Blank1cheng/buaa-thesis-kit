@@ -124,6 +124,90 @@ def test_inspect_docx_output_blocks_equation_preview_screenshot_substitute(tmp_p
     assert any("editable_equation_missing" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_figure_debug_and_local_paths(tmp_path):
+    output = tmp_path / "debug-text.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("[Figure inserted] D:\\Work\\.worktrees\\image1.png")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("unsafe_word_body_text" in item for item in result.blocking_items)
+
+
+def test_inspect_docx_output_blocks_english_references_heading_for_chinese_output(tmp_path):
+    output = tmp_path / "english-references.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("References")
+    document.add_paragraph("[1] Wang. Test. 2026.")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("english_references_heading_visible" in item for item in result.blocking_items)
+
+
+def test_inspect_docx_output_blocks_consecutive_formula_token_dump(tmp_path):
+    output = tmp_path / "formula-dump.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    for token in ("h(x,y)", "OTF(u,v)", "H(u,v)=F(u,v)G(u,v)", "MTF(f)", "g(x,y)=h(x,y)*f(x,y)"):
+        document.add_paragraph(token)
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("formula_token_dump_visible" in item for item in result.blocking_items)
+
+
+def test_inspect_docx_output_allows_wrapped_english_reference_fragments(tmp_path):
+    output = tmp_path / "references.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    for fragment in (
+        "on of roller in a hot strip mill based on multi-scale LSTM with multi-head a",
+        "ttention[J].Reliability Engineering and System Safety,2024,248110161-.",
+        "[22]Zhang T ,Wang H .Quantile regression network-based cross-domain prediction",
+        "hod for Multi-Component System Considering Maintenance: Subsea Christmas",
+        "Tree System as A Case Study[J].China Ocean Engineering,2024,38(2):198-209.",
+        "[30]Jang I ,Kim H C .Prediction of Remaining Useful Life (RUL) of Electronic",
+        "Components in the POSAFE-Q PLC Platform under NPP Dynamic Stress Con",
+        "ditions[J].Nuclear Engineering and Technology,2024,56(5):1863-1873.",
+    ):
+        document.add_paragraph(fragment)
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert not any("formula_token_dump_visible" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_blocks_internal_equation_object_token(tmp_path):
     output = tmp_path / "equation-token.docx"
     document = Document()

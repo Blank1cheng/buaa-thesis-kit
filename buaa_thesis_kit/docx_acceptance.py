@@ -20,6 +20,15 @@ PAGE_SCREENSHOT_MIN_HEIGHT_IN = 7.4
 MAX_BODY_SNIPPETS = 8
 MIN_BODY_SNIPPET_CHARS = 20
 MAX_BODY_SNIPPET_CHARS = 120
+FORBIDDEN_VISIBLE_TEXT_MARKERS = (
+    "[Figure inserted]",
+    "[Figure requires review]",
+    ".worktrees",
+    "D:\\",
+    ".wmf",
+    ".emf",
+    ".png",
+)
 
 
 @dataclass
@@ -117,6 +126,9 @@ def inspect_docx_output(
         result.blocking_items.append(
             "editable_equation_object_token_visible: internal editable equation placeholder was not converted to a Word/OLE object."
         )
+
+    _inspect_forbidden_visible_text(result, visible_text, document)
+    _inspect_formula_token_dump(result, document)
 
     unresolved = re.findall(r"\{\{\s*[A-Z_]+\s*\}\}", visible_text)
     if unresolved:
@@ -241,6 +253,94 @@ def _document_visible_text(document) -> str:
             for cell in row.cells:
                 parts.extend(paragraph.text for paragraph in cell.paragraphs)
     return "\n".join(part for part in parts if part is not None)
+
+
+def _inspect_forbidden_visible_text(
+    result: DocxOutputInspection,
+    visible_text: str,
+    document,
+) -> None:
+    found = [marker for marker in FORBIDDEN_VISIBLE_TEXT_MARKERS if marker in visible_text]
+    if found:
+        result.blocking_items.append(
+            "unsafe_word_body_text: final Word output exposes process/debug text or local asset paths: "
+            + ", ".join(found)
+        )
+    for paragraph_text in _document_visible_paragraphs(document):
+        if paragraph_text.strip() == "References":
+            result.blocking_items.append(
+                "english_references_heading_visible: Chinese BUAA thesis output must use 参考文献."
+            )
+            break
+
+
+def _inspect_formula_token_dump(result: DocxOutputInspection, document) -> None:
+    consecutive = 0
+    for paragraph_text in _document_visible_paragraphs(document):
+        if _looks_like_formula_token_dump_line(paragraph_text):
+            consecutive += 1
+            if consecutive >= 5:
+                result.blocking_items.append(
+                    "formula_token_dump_visible: five or more consecutive equation-like token lines were rendered as normal body text."
+                )
+                return
+        else:
+            consecutive = 0
+
+
+def _document_visible_paragraphs(document) -> list[str]:
+    parts: list[str] = []
+    parts.extend(paragraph.text for paragraph in document.paragraphs)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                parts.extend(paragraph.text for paragraph in cell.paragraphs)
+    return [part for part in parts if part is not None]
+
+
+def _looks_like_formula_token_dump_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or len(value) > 80:
+        return False
+    if value.startswith("[公式缺失："):
+        return False
+    if re.search(r"[\u4e00-\u9fff]", value):
+        return False
+    if not re.search(r"[A-Za-z]", value):
+        return False
+    if _looks_like_reference_fragment(value):
+        return False
+    if "=" in value:
+        return True
+    if re.search(r"\\(?:frac|sum|int|sqrt|left|right|theta|alpha|beta|gamma|omega)\b", value):
+        return True
+    if re.search(r"\b(?:OTF|MTF|PSF)\s*\(", value, flags=re.IGNORECASE):
+        return True
+    if re.match(r"^[A-Za-z]\s*\([A-Za-z0-9_,\s]+\)(?:\s*[+\-*/^].*)?$", value):
+        return True
+    compact = re.sub(r"\s+", "", value)
+    operator_count = len(re.findall(r"[+*/^_\\]", compact))
+    word_count = len(re.findall(r"[A-Za-z]{2,}", value))
+    if len(compact) <= 40 and operator_count >= 1 and word_count <= 2:
+        return True
+    return False
+
+
+def _looks_like_reference_fragment(value: str) -> bool:
+    if re.match(r"^\[\d+\]", value):
+        return True
+    if re.search(r"\[(?:J|M|C|D|R|P|S|EB/OL|OL)\]", value, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\b(?:19|20)\d{2}\b", value):
+        return True
+    if re.search(
+        r"\b(?:Journal|Engineering|Science|Technology|Proceedings|Transactions|"
+        r"Prediction|Reliability|Mechanical|Nuclear)\b",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return False
 
 
 def _contains_any(text: str, needles: Iterable[str]) -> bool:

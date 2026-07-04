@@ -318,8 +318,8 @@ def _render_references(references: Iterable[ContentBlock]) -> list[str]:
     return [
         "\n\n".join(
             [
-                r"\chapter*{References}",
-                r"\addcontentsline{toc}{chapter}{References}",
+                r"\chapter*{参考文献}",
+                r"\addcontentsline{toc}{chapter}{参考文献}",
                 *rendered_references,
             ]
         )

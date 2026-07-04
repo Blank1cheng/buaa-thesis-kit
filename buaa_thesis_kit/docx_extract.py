@@ -590,6 +590,7 @@ def _split_content(
         if current is not None and mode in {"body", "acknowledgements", "appendix"}:
             current.text = _append_text(current.text, text)
 
+    sections = _repair_auto_numbered_headings(sections)
     front_matter = {key: "\n".join(value).strip() for key, value in front_matter_lines.items() if value}
     return front_matter, sections, references, appendices
 
@@ -611,6 +612,8 @@ def _detect_heading(block: TextBlock) -> tuple[str, int, float] | None:
     text = block.text
     if _looks_like_toc_entry(text) or _is_structural_marker(text):
         return None
+    if _looks_like_chapter_summary_paragraph(text):
+        return None
 
     style = block.style_name.lower()
     if style.startswith("heading") or style.startswith("标题"):
@@ -626,6 +629,50 @@ def _detect_heading(block: TextBlock) -> tuple[str, int, float] | None:
     if re.match(r"^\d+\s+[\u4e00-\u9fffA-Za-z].{0,60}$", text) and not re.match(r"^\d{4}\s*年", text):
         return text, 1, 0.78
     return None
+
+
+def _repair_auto_numbered_headings(sections: list[ContentBlock]) -> list[ContentBlock]:
+    last_chapter_number = 0
+    for index, section in enumerate(sections):
+        if section.level != 1 or section.type not in {"chapter", "section"}:
+            continue
+        title = _clean_text(section.title)
+        explicit = _explicit_chapter_number(title)
+        if explicit is not None:
+            last_chapter_number = explicit
+            continue
+        inferred = _infer_chapter_number_from_neighbors(sections, index)
+        if inferred is None and last_chapter_number:
+            inferred = last_chapter_number + 1
+        if inferred is None:
+            continue
+        section.title = f"{inferred} {title}"
+        last_chapter_number = inferred
+    return sections
+
+
+def _explicit_chapter_number(title: str) -> int | None:
+    match = re.match(r"^(\d+)\s+\S+", title)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _infer_chapter_number_from_neighbors(sections: list[ContentBlock], index: int) -> int | None:
+    for following in sections[index + 1 :]:
+        if following.level == 1:
+            break
+        match = re.match(r"^(\d+)\.\d+\s+\S+", _clean_text(following.title))
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _looks_like_chapter_summary_paragraph(text: str) -> bool:
+    value = _clean_text(text)
+    if not re.match(r"^第[一二三四五六七八九十百零〇两]+章\s+\S+", value):
+        return False
+    return bool(re.search(r"[。；;]", value))
 
 
 def _extract_media(source_copy: Path, work_dir: Path) -> tuple[list[AssetItem], list[str]]:

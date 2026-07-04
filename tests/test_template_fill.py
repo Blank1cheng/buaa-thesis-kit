@@ -159,10 +159,10 @@ def test_no_placeholder_template_fallback_builds_docx_from_model(tmp_path):
     assert "Opening paragraph." in text
     assert "Metric" in text
     assert "Accuracy" in text
-    assert "[Figure requires review]" in text
-    assert "missing-image.png" in text
-    assert "[Equation requires review]" in text
-    assert "x+y" in text
+    assert "[图像缺失：Figure 1 System overview，需人工确认]" in text
+    assert "missing-image.png" not in text
+    assert "[公式缺失：" in text
+    assert "x+y" not in text
     assert "[1] Wang. Flight control study. 2026." in text
     assert "Appendix A" in text
     assert "Supplemental material." in text
@@ -214,7 +214,7 @@ def test_scalar_only_placeholder_template_appends_unrepresented_major_blocks(tmp
     assert "1 Introduction" in text
     assert "Metric" in text
     assert "Figure 1 System overview" in text
-    assert "[Equation requires review]" in text
+    assert "[公式缺失：" in text
     assert "[1] Wang. Flight control study. 2026." in text
     assert "Appendix A" in text
 
@@ -275,8 +275,10 @@ def test_figures_placeholder_inserts_supported_image_and_reviews_missing_image(t
 
     result = Document(output)
     text = _all_text(result)
-    assert "[Figure inserted] Inserted figure" in text
-    assert "[Figure requires review] Missing figure" in text
+    assert "Inserted figure" in text
+    assert "[Figure inserted]" not in text
+    assert "[图像缺失：Missing figure，需人工确认]" in text
+    assert "missing.png" not in text
     with zipfile.ZipFile(output) as package:
         assert any(name.startswith("word/media/") for name in package.namelist())
 
@@ -330,7 +332,7 @@ def test_equations_placeholder_inserts_supported_embedded_equation_preview(tmp_p
 
     result = Document(output)
     text = _all_text(result)
-    assert "[Equation preview inserted] equation.bin" in text
+    assert "[Equation preview inserted]" not in text
     assert "[Equation requires review]" not in text
     with zipfile.ZipFile(output) as package:
         assert any(name.startswith("word/media/") for name in package.namelist())
@@ -440,8 +442,9 @@ def test_corrupt_existing_png_is_reviewed_without_false_inserted_label(tmp_path)
     for output in (placeholder_output, fallback_output):
         text = _all_text(Document(output))
         assert "[Figure inserted]" not in text
-        assert "[Figure requires review] Corrupt figure" in text
-        assert "corrupt.png" in text
+        assert "[Figure requires review]" not in text
+        assert "[图像缺失：Corrupt figure，需人工确认]" in text
+        assert "corrupt.png" not in text
 
 
 def test_inline_scalar_replacement_preserves_trailing_space_before_bold_run(tmp_path):

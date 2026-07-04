@@ -15,9 +15,9 @@ from buaa_thesis_kit.template_fill import (
     _add_abstracts,
     _add_appendices,
     _add_equations,
-    _add_figures,
     _add_references,
     _add_sections,
+    _add_table_of_contents,
     _add_tables,
     _apply_conservative_formatting,
     finalize_equation_objects,
@@ -31,6 +31,27 @@ SUPPORTED_INLINE_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".ti
 FIGURE_MARKER_RE = re.compile(
     "^(?:(?:\u56fe)|fig(?:ure)?\\.?)\\s*(\\d+(?:[.\\-]\\d+)*)",
     flags=re.IGNORECASE,
+)
+FRONT_MATTER_SECTION_TITLES = {
+    "本科毕业设计（论文）任务书",
+    "本科毕业设计(论文)任务书",
+    "毕业设计（论文）任务书",
+    "毕业设计(论文)任务书",
+    "任务书",
+    "本人声明",
+    "摘要",
+    "Abstract",
+    "目录",
+}
+COVER_METADATA_LABELS = (
+    "学院",
+    "院（系）名称",
+    "专业",
+    "专业名称",
+    "学生姓名",
+    "指导教师",
+    "学号",
+    "题目",
 )
 
 
@@ -163,23 +184,83 @@ def _append_spine_page(document, metadata: Metadata) -> None:
 
 
 def _append_model_content(document, model: ThesisModel) -> None:
+    body_sections = _body_sections(model.sections)
+    document.add_page_break()
+    _append_task_book_page(document, model.metadata)
+    document.add_page_break()
+    _append_declaration_page(document, model.metadata)
     document.add_page_break()
     _add_abstracts(document, model)
-    if _has_abstracts(model) and model.sections:
+    _add_table_of_contents(document, body_sections)
+    if body_sections:
         document.add_page_break()
-    rendered_figure_ids = _add_sections_with_page_breaks(
+    _add_sections_with_page_breaks(
         document,
-        _sections_without_pdf_placeholder_heading(model.sections),
+        body_sections,
         model.figures,
     )
     _add_tables(document, model.tables)
-    _add_figures(
-        document,
-        [figure for figure in model.figures if figure.id not in rendered_figure_ids],
-    )
-    _add_equations(document, model.equations)
+    _add_equations(document, _trusted_editable_equations(model))
     _add_references(document, model.references)
     _add_appendices(document, model.appendices)
+
+
+def _append_task_book_page(document, metadata: Metadata) -> None:
+    heading = document.add_paragraph("本科毕业设计（论文）任务书")
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _format_runs(heading, bold=True, size=14)
+    for label, value in [
+        ("题目", metadata.title_cn or metadata.title_en),
+        ("学生姓名", metadata.student_name),
+        ("学号", metadata.student_id),
+        ("学院", metadata.college),
+        ("专业", metadata.major),
+        ("指导教师", metadata.advisor),
+        ("日期", metadata.date),
+    ]:
+        if _metadata_value(value):
+            document.add_paragraph(f"{label}：{_metadata_value(value)}")
+    document.add_paragraph("任务内容、进度安排和指导记录请以学校原始任务书为准；本页由规范化流水线按模板生成，需人工复核。")
+
+
+def _append_declaration_page(document, metadata: Metadata) -> None:
+    heading = document.add_paragraph("本人声明")
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _format_runs(heading, bold=True, size=14)
+    document.add_paragraph(
+        "本人郑重声明：所提交的毕业设计（论文）是在指导教师的指导下独立完成的。"
+        "除文中已经注明引用的内容外，本论文不包含他人已经发表或撰写过的研究成果。"
+    )
+    if _metadata_value(metadata.student_name):
+        document.add_paragraph(f"学生签名：{_metadata_value(metadata.student_name)}")
+
+
+def _trusted_editable_equations(model: ThesisModel):
+    return [
+        equation
+        for equation in model.equations
+        if equation.omml.strip()
+    ]
+
+
+def _body_sections(sections: list[ContentBlock]) -> list[ContentBlock]:
+    return [
+        section
+        for section in _sections_without_pdf_placeholder_heading(sections)
+        if not _is_front_matter_section(section)
+    ]
+
+
+def _is_front_matter_section(section: ContentBlock) -> bool:
+    title = _metadata_value(section.title)
+    compact_title = re.sub(r"\s+", "", title)
+    if compact_title in {re.sub(r"\s+", "", item) for item in FRONT_MATTER_SECTION_TITLES}:
+        return True
+    lines = [line.strip() for line in str(section.text or "").splitlines() if line.strip()]
+    if not title and 1 <= len(lines) <= 10:
+        hit_count = sum(1 for line in lines if any(label in line for label in COVER_METADATA_LABELS))
+        return hit_count >= 2
+    return False
 
 
 def _add_sections_with_page_breaks(
@@ -270,7 +351,10 @@ def _section_starts_new_page(section: ContentBlock) -> bool:
     title = _metadata_value(section.title)
     if title in {"本人声明", "摘要", "Abstract"}:
         return True
-    return section.level <= 1 and bool(re.match(r"^\d+\s+\S+", title))
+    return section.level <= 1 and bool(
+        re.match(r"^\d+\s+\S+", title)
+        or re.match(r"^第[一二三四五六七八九十百]+章\s+\S+$", title)
+    )
 
 
 def _sections_without_pdf_placeholder_heading(sections: list[ContentBlock]) -> list[ContentBlock]:
@@ -281,13 +365,6 @@ def _sections_without_pdf_placeholder_heading(sections: list[ContentBlock]) -> l
         else:
             rendered.append(section)
     return rendered
-
-
-def _has_abstracts(model: ThesisModel) -> bool:
-    return any(
-        str(model.front_matter.get(key, "")).strip()
-        for key in ("chinese_abstract", "abstract_cn", "cn_abstract", "english_abstract", "abstract_en", "en_abstract")
-    )
 
 
 def _spine_values(metadata: Metadata) -> list[str]:

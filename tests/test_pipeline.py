@@ -391,7 +391,7 @@ def test_run_pipeline_scanned_pdf_keeps_page_image_as_ocr_evidence_not_word_scre
         document_xml = docx_zip.read("word/document.xml").decode("utf-8")
     assert "<w:drawing" not in document_xml
     assert "[Figure inserted]" not in document_xml
-    assert "OCR/manual transcription required" in document_xml
+    assert "OCR/manual transcription required" not in document_xml
     tex = (output / "thesis.tex").read_text(encoding="utf-8")
     assert "pdf-page-001.png" in tex
     assert "\\includegraphics" not in tex
