@@ -22,6 +22,7 @@ class GraphState:
     output_root: Path
     work_dir: Path
     template_path: Path | None = None
+    sample_mode: str = "full"
     source_kind: str = ""
     extraction_source: Path | None = None
     authoritative_docx: Path | None = None

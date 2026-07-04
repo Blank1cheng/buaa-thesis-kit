@@ -14,9 +14,9 @@
 
 模板填充必须保持固定顺序：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。目录由 Word TOC 域生成，导出 PDF 前必须更新域；不得把源 PDF/DOCX 的目录文本作为正文复制。已经渲染到任务书、声明、摘要、目录或封面的内容必须从正文 section 中过滤，避免重复。
 
-封面、书脊、任务书、声明、摘要和目录必须走 `front_matter_renderer`，不能回退为普通段落堆叠。固定校徽和北航字标来自 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；书脊使用竖排文本框 `w:textDirection="tbRl"`，不显示横排 `书脊` 或 `Book Spine` 调试字样。摘要和目录使用罗马页码 section，正文 section 必须 `start=1` 重新编号。
+封面、书脊、任务书、声明、摘要和目录必须走 render-first 前置页流程，不能回退为普通段落堆叠。入口是 `front_matter_renderer`，可复用能力在 `frontmatter_render/`：`replace_placeholders.py` 必须能替换 document/header/footer/textbox 中跨 run 的占位符；`capture_reference.py` 用于从参考 DOCX 捕获模板页；`validate_render.py` 用于渲染级回归。固定校徽和北航字标来自 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；书脊使用竖排文本框 `w:textDirection="tbRl"`，不显示横排 `书脊` 或 `Book Spine` 调试字样。任务书必须包含 I/II/III/IV 参考版分区，声明页必须使用参考版“我声明，本论文及其研究工作……”文本，不能出现额外 `指导教师签名`。摘要和目录使用罗马页码 section，正文 section 必须 `start=1` 重新编号。
 
-交付前运行 `python scripts/validate_front_matter.py <reference.docx> output/thesis.docx`。该脚本至少检查封面字段、竖排书脊、中英文摘要分离、TOC 域、前置页罗马页码、正文页码重启，以及旧调试标记/本地路径是否进入 Word 正文。
+交付前运行 `python scripts/validate_front_matter.py <reference.docx> output/thesis.docx --sample-mode truncated` 和 `python scripts/validate_frontmatter_render.py --reference <reference.pdf|docx> --candidate output/thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output/frontmatter_diff`。结构脚本至少检查封面字段、竖排书脊、任务书 I/II/III/IV、声明文本、中英文摘要分离、TOC 域、前置页罗马页码、正文页码重启，以及旧调试标记/本地路径是否进入 Word 正文。渲染脚本输出 `frontmatter_diff/report.json`、`page_001_overlay.png`、`page_001_diff.png`、`page_001_anchors.json`，用于后续像素级 anchor 收敛。`truncated` 模式只关闭正文/参考文献完整性要求，不关闭 front matter 渲染、泄漏和可编辑性检查。
 
 DOCX 自动编号丢失时，可从后续 `1.1`、`2.1` 等小节推断一级标题编号并恢复为 `1 绪论` 这类标题。章末总结句，例如 `第一章 绪论。本章介绍...`，应保持为正文段落，不能当成新章标题或分页触发器。
 

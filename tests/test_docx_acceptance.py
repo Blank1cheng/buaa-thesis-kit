@@ -142,6 +142,28 @@ def test_inspect_docx_output_blocks_figure_debug_and_local_paths(tmp_path):
     assert any("unsafe_word_body_text" in item for item in result.blocking_items)
 
 
+def test_inspect_docx_output_blocks_expanded_debug_and_domain_markers(tmp_path):
+    output = tmp_path / "expanded-debug-text.docx"
+    document = Document()
+    document.add_paragraph("Editable Thesis")
+    document.add_paragraph("20370001")
+    document.add_paragraph("需人工复核")
+    document.add_paragraph("MERGEFORMAT")
+    document.add_paragraph("公式章")
+    document.add_paragraph("下一章")
+    document.add_paragraph("output_work_123")
+    document.save(output)
+
+    result = inspect_docx_output(
+        output,
+        Metadata(title_cn="Editable Thesis", student_id="20370001"),
+        source_kind="docx",
+        require_spine=False,
+    )
+
+    assert any("unsafe_word_body_text" in item for item in result.blocking_items)
+
+
 def test_inspect_docx_output_blocks_english_references_heading_for_chinese_output(tmp_path):
     output = tmp_path / "english-references.docx"
     document = Document()

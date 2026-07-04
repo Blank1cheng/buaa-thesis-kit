@@ -223,6 +223,39 @@ def test_diagnose_compliance_blocks_reference_citation_without_entry(tmp_path):
     assert "citation_without_reference: [2]" in state.blocking_items
 
 
+def test_diagnose_compliance_truncated_sample_demotes_reference_gaps_to_review(tmp_path):
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import diagnose_compliance
+
+    source = tmp_path / "source.docx"
+    work = tmp_path / "output_work"
+    output = tmp_path / "output"
+    _write_minimal_docx(source)
+    state = GraphState(source_path=source, output_root=output, work_dir=work, sample_mode="truncated")
+    state.source_features["has_spine"] = True
+    state.model = ThesisModel(
+        sections=[
+            ContentBlock(
+                id="sec-1",
+                type="chapter",
+                title="1 Introduction",
+                text="This truncated sample cites [2] but intentionally omits the later reference list.",
+                level=1,
+            )
+        ],
+        references=[
+            ContentBlock(id="ref-1", type="reference", text="[1] Wang. Flight control. 2026.")
+        ],
+        status="needs_review",
+    )
+
+    result = diagnose_compliance(state)
+
+    assert result.next_node == "plan_minimal_fixes"
+    assert not any("citation_without_reference" in item for item in state.blocking_items)
+    assert any("truncated_sample_reference_check_skipped" in item for item in state.manual_review)
+
+
 def test_apply_word_fixes_renders_docx_source_through_buaa_template(tmp_path):
     from buaa_thesis_kit.graph import GraphState
     from buaa_thesis_kit.graph_nodes import apply_word_fixes
@@ -306,6 +339,59 @@ def test_apply_word_fixes_does_not_treat_template_spine_instruction_as_existing_
     assert not any(text.strip() == "书脊" for text in paragraphs)
     assert "BUAA_VERTICAL_SPINE" in _document_xml(state.authoritative_docx)
     assert state.applied_repairs == ["insert_spine"]
+
+
+def test_apply_word_fixes_fallback_spine_has_no_debug_title(tmp_path, monkeypatch):
+    import buaa_thesis_kit.graph_nodes as graph_nodes
+    from buaa_thesis_kit.graph import GraphState
+    from buaa_thesis_kit.graph_nodes import apply_word_fixes
+
+    source = tmp_path / "source.docx"
+    work = tmp_path / "output_work"
+    output = tmp_path / "output"
+    _write_minimal_docx(source)
+
+    def fake_render_editable_buaa_docx(_template, model, destination):
+        document = Document()
+        document.add_paragraph(model.metadata.title_cn)
+        document.add_paragraph(model.metadata.student_id)
+        document.add_paragraph("Body text that must be preserved.")
+        document.save(destination)
+
+    monkeypatch.setattr(graph_nodes, "render_editable_buaa_docx", fake_render_editable_buaa_docx)
+    state = GraphState(source_path=source, output_root=output, work_dir=work, template_path=TEMPLATE)
+    state.extraction_source = source
+    state.source_kind = "docx"
+    state.repair_actions.append("insert_spine")
+    state.model = ThesisModel(
+        metadata=Metadata(
+            title_cn="Fallback Spine Thesis",
+            student_id="20370001",
+            student_name="Zhang San",
+            college="Automation College",
+            major="Automation",
+            date="2026",
+        ),
+        sections=[
+            ContentBlock(
+                id="sec-1",
+                type="chapter",
+                title="1 Introduction",
+                text="Body text that must be preserved.",
+                level=1,
+            )
+        ],
+    )
+
+    apply_word_fixes(state)
+
+    assert state.authoritative_docx is not None
+    visible_text = "\n".join(paragraph.text for paragraph in Document(str(state.authoritative_docx)).paragraphs)
+    assert "Book Spine" not in visible_text
+    assert "书脊" not in visible_text
+    document_xml = _document_xml(state.authoritative_docx)
+    assert "BUAA_VERTICAL_SPINE" in document_xml
+    assert 'w:textDirection w:val="tbRl"' in document_xml
 
 
 def test_visual_compare_blocks_pdf_word_without_editable_text(tmp_path):

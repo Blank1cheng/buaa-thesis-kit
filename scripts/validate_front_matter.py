@@ -15,8 +15,18 @@ FORBIDDEN_TEXT = (
     "[Figure inserted]",
     "[Figure requires review]",
     "[Equation preview inserted]",
+    "本页由规范化流水线",
+    "需人工复核",
+    "References 作为中文参考文献标题",
+    "MERGEFORMAT",
+    "公式章",
+    "下一章",
     "D:\\",
     ".worktrees",
+    "output_work_",
+    "image1.png",
+    ".wmf",
+    ".emf",
 )
 REQUIRED_ORDER = (
     "本科毕业设计（论文）任务书",
@@ -27,9 +37,19 @@ REQUIRED_ORDER = (
 )
 
 
-def validate_front_matter(reference_docx: Path, thesis_docx: Path) -> dict[str, object]:
+def validate_front_matter(
+    reference_docx: Path,
+    thesis_docx: Path,
+    *,
+    sample_mode: str = "full",
+) -> dict[str, object]:
     del reference_docx  # reserved for later geometric comparison against a golden DOCX.
-    result: dict[str, object] = {"status": "pass", "blocking_items": [], "notes": []}
+    result: dict[str, object] = {
+        "status": "pass",
+        "sample_mode": sample_mode,
+        "blocking_items": [],
+        "notes": [],
+    }
     blocking_items: list[str] = result["blocking_items"]  # type: ignore[assignment]
     notes: list[str] = result["notes"]  # type: ignore[assignment]
 
@@ -75,9 +95,13 @@ def validate_front_matter(reference_docx: Path, thesis_docx: Path) -> dict[str, 
             blocking_items.append(f"forbidden_front_matter_text: {marker}")
 
     _require_order(blocking_items, paragraphs, REQUIRED_ORDER)
+    _inspect_task_book(blocking_items, all_text)
+    _inspect_declaration(blocking_items, all_text)
     _inspect_abstract_split(blocking_items, paragraphs)
     _inspect_toc_and_page_numbering(blocking_items, document_xml)
 
+    if sample_mode == "truncated":
+        notes.append("truncated sample mode: body/reference completeness is intentionally not checked.")
     if not blocking_items:
         notes.append("front matter validation passed.")
     result["status"] = "failed" if blocking_items else "pass"
@@ -109,7 +133,7 @@ def _require_text(blocking_items: list[str], compact_text: str, marker: str) -> 
 
 def _require_order(blocking_items: list[str], paragraphs: list[str], markers: tuple[str, ...]) -> None:
     positions = {
-        marker: next((index for index, text in enumerate(paragraphs) if marker in text), -1)
+        marker: next((index for index, text in enumerate(paragraphs) if _compact(marker) in _compact(text)), -1)
         for marker in markers
     }
     missing = [marker for marker, index in positions.items() if index < 0]
@@ -118,6 +142,10 @@ def _require_order(blocking_items: list[str], paragraphs: list[str], markers: tu
         return
     if any(positions[markers[index]] >= positions[markers[index + 1]] for index in range(len(markers) - 1)):
         blocking_items.append("front_matter_order_invalid: required pages are out of order.")
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or ""))
 
 
 def _inspect_abstract_split(blocking_items: list[str], paragraphs: list[str]) -> None:
@@ -140,6 +168,33 @@ def _inspect_abstract_split(blocking_items: list[str], paragraphs: list[str]) ->
             blocking_items.append(f"en_abstract_required_text_missing: {marker}")
 
 
+def _inspect_task_book(blocking_items: list[str], all_text: str) -> None:
+    for marker in (
+        "Ⅰ、毕业设计（论文）题目：",
+        "Ⅱ、毕业设计（论文）使用的原始资料（数据）及设计技术要求：",
+        "Ⅲ、毕业设计（论文）工作内容：",
+        "Ⅳ、主要参考资料：",
+    ):
+        if marker not in all_text:
+            blocking_items.append(f"task_book_required_marker_missing: {marker}")
+    for marker in ("毕业设计（论文）时间", "答辩时间", "成绩"):
+        if marker not in all_text:
+            blocking_items.append(f"task_book_footer_field_missing: {marker}")
+
+
+def _inspect_declaration(blocking_items: list[str], all_text: str) -> None:
+    target = "我声明，本论文及其研究工作是由本人在导师指导下独立完成的"
+    if target not in all_text:
+        blocking_items.append("declaration_reference_text_missing")
+    if "本人郑重声明" in all_text:
+        blocking_items.append("declaration_wrong_text: 本人郑重声明")
+    if "指导教师签名" in all_text:
+        blocking_items.append("declaration_extra_advisor_signature")
+    for marker in ("作者：", "签字：", "时间："):
+        if marker not in all_text:
+            blocking_items.append(f"declaration_signature_field_missing: {marker}")
+
+
 def _inspect_toc_and_page_numbering(blocking_items: list[str], document_xml: str) -> None:
     if 'TOC \\o "1-3"' not in document_xml:
         blocking_items.append("toc_field_missing: Word TOC field not found.")
@@ -159,8 +214,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate BUAA thesis front matter structure.")
     parser.add_argument("reference_docx", type=Path)
     parser.add_argument("thesis_docx", type=Path)
+    parser.add_argument(
+        "--sample-mode",
+        choices=("full", "truncated"),
+        default="full",
+        help="Use truncated for debug samples; this script still validates front matter only.",
+    )
     args = parser.parse_args(argv)
-    result = validate_front_matter(args.reference_docx, args.thesis_docx)
+    result = validate_front_matter(args.reference_docx, args.thesis_docx, sample_mode=args.sample_mode)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "pass" else 1
 

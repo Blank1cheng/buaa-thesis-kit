@@ -48,6 +48,19 @@ COVER_METADATA_LABELS = (
     "学号",
     "题目",
 )
+PDF_FRONT_MATTER_TITLE_PATTERNS = (
+    r"^\d+\s*分类号$",
+    r"^\d{4}\s*年\s*\d{1,2}\s*月$",
+    r"^[ⅠⅡⅢⅣIVX]+、.*毕业设计.*",
+    r"^[ⅠⅡⅢⅣIVX]+、.*主要参考资料",
+)
+PDF_FRONT_MATTER_TEXT_MARKERS = (
+    "论文封面书脊",
+    "毕业设计(论文)",
+    "毕业设计（论文）题目",
+    "本科毕业设计（论文）任务书",
+    "四号黑体字",
+)
 
 
 def render_editable_buaa_docx(template_path: Path, model: ThesisModel, output_path: Path) -> None:
@@ -97,10 +110,19 @@ def _is_front_matter_section(section: ContentBlock) -> bool:
     compact_title = re.sub(r"\s+", "", title)
     if compact_title in {re.sub(r"\s+", "", item) for item in FRONT_MATTER_SECTION_TITLES}:
         return True
+    if any(re.match(pattern, title) for pattern in PDF_FRONT_MATTER_TITLE_PATTERNS):
+        return True
     lines = [line.strip() for line in str(section.text or "").splitlines() if line.strip()]
+    joined_text = "\n".join(lines)
+    if any(marker in title or marker in joined_text for marker in PDF_FRONT_MATTER_TEXT_MARKERS):
+        return True
     if not title and 1 <= len(lines) <= 10:
         hit_count = sum(1 for line in lines if any(label in line for label in COVER_METADATA_LABELS))
         return hit_count >= 2
+    if lines:
+        hit_count = sum(1 for line in lines if any(label in line for label in COVER_METADATA_LABELS))
+        if hit_count >= 3 and not re.match(r"^\d+(?:\.\d+)*\s+\S+", title):
+            return True
     return False
 
 

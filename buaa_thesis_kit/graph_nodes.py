@@ -7,7 +7,7 @@ from docx import Document
 from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.figure_table_acceptance import inspect_figure_tables
-from buaa_thesis_kit.front_matter_renderer import SPINE_XML_MARKER
+from buaa_thesis_kit.front_matter_renderer import SPINE_XML_MARKER, _vertical_spine_pict
 from buaa_thesis_kit.graph import GraphState, NodeResult
 from buaa_thesis_kit.models import Metadata, ThesisModel
 from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
@@ -34,7 +34,10 @@ def diagnose_compliance(state: GraphState) -> NodeResult:
         _append_once(state.findings, "missing_spine")
     reference_inspection = inspect_references(state.model)
     for item in reference_inspection.blocking_items:
-        _append_once(state.blocking_items, item)
+        if state.sample_mode == "truncated" and _is_truncated_reference_completeness_item(item):
+            _append_once(state.manual_review, f"truncated_sample_reference_check_skipped: {item}")
+        else:
+            _append_once(state.blocking_items, item)
     for item in reference_inspection.manual_review:
         _append_once(state.manual_review, item)
     for item in reference_inspection.notes:
@@ -213,12 +216,12 @@ def _expected_omml_equation_count(model: ThesisModel) -> int:
 
 def _append_spine_page(document, metadata: Metadata) -> None:
     document.add_page_break()
-    document.add_paragraph("Book Spine")
-    document.add_paragraph(_metadata_value(metadata.title_cn or metadata.title_en))
-    document.add_paragraph(_metadata_value(metadata.student_name))
-    document.add_paragraph(_metadata_value(metadata.college))
-    document.add_paragraph(_metadata_value(metadata.major))
-    document.add_paragraph(_metadata_value(metadata.date))
+    paragraph = document.add_paragraph()
+    paragraph.add_run()._r.append(_vertical_spine_pict(metadata))
+
+
+def _is_truncated_reference_completeness_item(item: str) -> bool:
+    return item.startswith("missing_references_section") or item.startswith("citation_without_reference")
 
 
 def _metadata_value(value: str) -> str:

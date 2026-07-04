@@ -12,7 +12,20 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+from buaa_thesis_kit.frontmatter_render.render_declaration import (
+    build_declaration_model,
+)
+from buaa_thesis_kit.frontmatter_render.render_taskbook import (
+    TASK_BOOK_TITLE,
+    TASK_BOOK_UNIVERSITY,
+    TASK_SECTION_RAW_MATERIALS,
+    TASK_SECTION_REFERENCES,
+    TASK_SECTION_TITLE,
+    TASK_SECTION_WORK_CONTENT,
+    build_task_book_model,
+)
 from buaa_thesis_kit.models import ContentBlock, Metadata, ThesisModel
+from buaa_thesis_kit.styles.buaa_styles import style_size_pt
 from buaa_thesis_kit.template_fill import _add_toc_field
 
 
@@ -36,7 +49,7 @@ def render_front_matter(
     _compact_cover_spacing(document)
     _trim_template_after_cover(document)
     _append_spine_page(document, model.metadata)
-    _append_task_book_page(document, model.metadata)
+    _append_task_book_page(document, model)
     _append_declaration_page(document, model.metadata)
     _append_chinese_abstract_page(document, model)
     _append_english_abstract_page(document, model)
@@ -123,7 +136,7 @@ def _replace_cover_fields(document, model: ThesisModel) -> None:
         elif stripped in {"（题目）", "(题目)"}:
             _replace_paragraph_lines_preserving_style(paragraph, title_lines)
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            _format_runs(paragraph, bold=True, size=16)
+            _format_runs(paragraph, bold=True, size=style_size_pt("CoverThesisTitle"))
         elif re.fullmatch(r"\d{4}年\d{1,2}月", stripped):
             _replace_paragraph_text_preserving_style(
                 paragraph,
@@ -266,44 +279,37 @@ def _spine_vertical_text_xml(text: str) -> str:
     return "".join(parts)
 
 
-def _append_task_book_page(document, metadata: Metadata) -> None:
+def _append_task_book_page(document, model: ThesisModel) -> None:
+    task = build_task_book_model(model)
     section = _new_section(document)
     _clear_header_footer(section)
-    _set_a4_page(section, top=2.4, bottom=2.4, left=2.8, right=2.4)
-    _center_heading(document, "本科毕业设计（论文）任务书", size=16)
-    _metadata_table(
+    _set_a4_page(section, top=2.2, bottom=2.0, left=2.7, right=2.4)
+    _center_heading(document, TASK_BOOK_UNIVERSITY, size=14)
+    _center_heading(document, TASK_BOOK_TITLE, size=16)
+    _task_section(document, TASK_SECTION_TITLE, task.title, min_lines=1)
+    _task_section(
         document,
-        [
-            ("毕业设计（论文）题目", metadata.title_cn or metadata.title_en),
-            ("学生姓名", metadata.student_name),
-            ("学号", metadata.student_id),
-            ("学院", metadata.college),
-            ("专业", metadata.major),
-            ("指导教师", metadata.advisor),
-        ],
+        TASK_SECTION_RAW_MATERIALS,
+        task.raw_materials_and_requirements,
+        min_lines=5,
     )
-    _labeled_blank_block(document, "毕业设计（论文）使用的原始资料（数据）及设计技术要求：", lines=4)
-    _labeled_blank_block(document, "毕业设计（论文）工作内容：", lines=5)
-    _labeled_blank_block(document, "主要参考资料：", lines=4)
+    _task_section(document, TASK_SECTION_WORK_CONTENT, task.work_content, min_lines=5)
+    _task_section(document, TASK_SECTION_REFERENCES, task.references, min_lines=4)
+    _task_footer_table(document, task)
 
 
 def _append_declaration_page(document, metadata: Metadata) -> None:
+    declaration = build_declaration_model(metadata)
     section = _new_section(document)
     _clear_header_footer(section)
     _set_a4_page(section, top=2.8, bottom=2.4, left=3.0, right=2.6)
-    _center_heading(document, "本人声明", size=16)
-    _body_paragraph(
-        document,
-        "本人郑重声明：所呈交的毕业设计（论文）是在指导教师指导下独立完成的。"
-        "除文中已经注明引用的内容外，本论文不包含任何其他个人或集体已经发表或撰写过的研究成果。",
-        first_line_indent=True,
-    )
-    _body_paragraph(
-        document,
-        "对本文研究做出重要贡献的个人和集体，均已在文中以明确方式标明。本人完全意识到本声明的法律结果由本人承担。",
-        first_line_indent=True,
-    )
-    _signature_table(document, metadata)
+    _center_heading(document, declaration.declaration_title, size=style_size_pt("DeclarationTitle"))
+    for _ in range(2):
+        document.add_paragraph()
+    _body_paragraph(document, declaration.declaration_text, first_line_indent=True)
+    for _ in range(5):
+        document.add_paragraph()
+    _declaration_signature_table(document, declaration.author_name, _date_year_month(declaration.date))
 
 
 def _append_chinese_abstract_page(document, model: ThesisModel) -> None:
@@ -312,7 +318,7 @@ def _append_chinese_abstract_page(document, model: ThesisModel) -> None:
     metadata = model.metadata
     _abstract_title(document, metadata.title_cn or metadata.title_en)
     _abstract_author_row(document, f"学生：{metadata.student_name}", f"指导老师：{metadata.advisor}")
-    _center_heading(document, "摘    要", size=15)
+    _center_heading(document, "摘    要", size=style_size_pt("AbstractTitleCN"))
     _add_text_paragraphs(document, _front_matter_value(model, "chinese_abstract", "abstract_cn", "cn_abstract"))
     keywords = _front_matter_value(model, "keywords_cn", "chinese_keywords", "cn_keywords", "keywords")
     _body_paragraph(document, f"关键词：{keywords}")
@@ -326,7 +332,7 @@ def _append_english_abstract_page(document, model: ThesisModel) -> None:
     author = _front_matter_value(model, "author_en") or model.metadata.student_name
     tutor = _front_matter_value(model, "tutor_en") or model.metadata.advisor
     _abstract_author_row(document, f"Author: {author}", f"Tutor: {tutor}")
-    _center_heading(document, "Abstract", size=15)
+    _center_heading(document, "Abstract", size=style_size_pt("AbstractTitleEN"))
     _add_text_paragraphs(document, _front_matter_value(model, "english_abstract", "abstract_en", "en_abstract"))
     keywords = _front_matter_value(model, "keywords_en", "english_keywords", "en_keywords")
     _body_paragraph(document, f"Key Words: {keywords}")
@@ -337,7 +343,7 @@ def _append_toc_page(document, body_sections: list[ContentBlock]) -> None:
         return
     section = _new_section(document)
     _set_front_matter_header_footer(section)
-    _center_heading(document, "目录", size=16)
+    _center_heading(document, "目    录", size=style_size_pt("TOCTitle"))
     _add_toc_field(document.add_paragraph())
 
 
@@ -383,6 +389,9 @@ def _set_header_footer(section, header_text: str, *, roman: bool) -> None:
     section.footer.is_linked_to_previous = False
     _clear_part(section.header)
     _clear_part(section.footer)
+    if roman:
+        _set_front_matter_page_header(section, header_text)
+        return
     header = section.header.add_paragraph(header_text)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     _format_runs(header, size=10.5)
@@ -392,6 +401,35 @@ def _set_header_footer(section, header_text: str, *, roman: bool) -> None:
     _add_page_field(footer)
     footer.add_run(" 页")
     _format_runs(footer, size=10.5 if roman else 10.5)
+
+
+def _set_front_matter_page_header(section, header_text: str) -> None:
+    table = section.header.add_table(rows=1, cols=3, width=Cm(16.4))
+    table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    widths = (Cm(2.2), Cm(10.8), Cm(3.4))
+    for cell, width in zip(table.rows[0].cells, widths):
+        cell.width = width
+        _clear_cell(cell)
+        _add_cell_bottom_border(cell)
+
+    logo = table.cell(0, 0).add_paragraph()
+    logo.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    logo.paragraph_format.space_after = Pt(0)
+    logo.add_run().add_picture(str(SEAL_ASSET), width=Cm(0.9), height=Cm(0.9))
+
+    title = table.cell(0, 1).add_paragraph(header_text)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title.paragraph_format.space_after = Pt(0)
+    _format_runs(title, size=10.5)
+
+    page = table.cell(0, 2).add_paragraph()
+    page.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    page.paragraph_format.space_after = Pt(0)
+    page.add_run("第 ")
+    _add_page_field(page)
+    page.add_run(" 页")
+    _format_runs(page, size=10.5)
 
 
 def _clear_part(part) -> None:
@@ -445,6 +483,35 @@ def _metadata_table(document, rows: list[tuple[str, str]]) -> None:
         _replace_cell_text(row.cells[1], _metadata_value(value), alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
 
+def _task_section(document, label: str, text: str, *, min_lines: int) -> None:
+    heading = document.add_paragraph(label)
+    _format_runs(heading, bold=True, size=12)
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if lines:
+        for line in lines:
+            _body_paragraph(document, line, first_line_indent=True)
+        return
+    for _ in range(min_lines):
+        paragraph = document.add_paragraph(" " * 2)
+        _format_runs(paragraph, size=12)
+        _add_bottom_border(paragraph)
+
+
+def _task_footer_table(document, task) -> None:
+    table = document.add_table(rows=4, cols=4)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    rows = [
+        ("学院", task.college, "专业/班级", task.major_class),
+        ("学生", task.student_name, "毕业设计（论文）时间", task.thesis_date_range),
+        ("答辩时间", task.defense_date, "成绩", task.grade),
+        ("指导教师", task.advisor, "系主任签字", task.department_director_signature),
+    ]
+    for row, values in zip(table.rows, rows):
+        for cell, value in zip(row.cells, values):
+            _replace_cell_text(cell, str(value or ""), alignment=WD_ALIGN_PARAGRAPH.CENTER)
+            _add_cell_bottom_border(cell)
+
+
 def _labeled_blank_block(document, label: str, *, lines: int) -> None:
     _body_paragraph(document, label)
     for _ in range(lines):
@@ -464,6 +531,20 @@ def _signature_table(document, metadata: Metadata) -> None:
     for row, (label, value) in zip(table.rows, values):
         _replace_cell_text(row.cells[0], f"{label}：", alignment=WD_ALIGN_PARAGRAPH.RIGHT)
         _replace_cell_text(row.cells[1], _metadata_value(value), alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+
+def _declaration_signature_table(document, author_name: str, date: str) -> None:
+    table = document.add_table(rows=3, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    values = [
+        ("作者", author_name),
+        ("签字", ""),
+        ("时间", date),
+    ]
+    for row, (label, value) in zip(table.rows, values):
+        _replace_cell_text(row.cells[0], f"{label}：", alignment=WD_ALIGN_PARAGRAPH.RIGHT)
+        _replace_cell_text(row.cells[1], _metadata_value(value), alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _add_cell_bottom_border(row.cells[1])
 
 
 def _abstract_title(document, title: str) -> None:
@@ -514,6 +595,20 @@ def _add_bottom_border(paragraph) -> None:
     bottom.set(qn("w:space"), "1")
     bottom.set(qn("w:color"), "000000")
     p_bdr.append(bottom)
+
+
+def _add_cell_bottom_border(cell) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_borders = tc_pr.find(qn("w:tcBorders"))
+    if tc_borders is None:
+        tc_borders = OxmlElement("w:tcBorders")
+        tc_pr.append(tc_borders)
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "4")
+    bottom.set(qn("w:space"), "0")
+    bottom.set(qn("w:color"), "000000")
+    tc_borders.append(bottom)
 
 
 def _replace_cell_text(cell, text: str, *, alignment=WD_ALIGN_PARAGRAPH.LEFT) -> None:

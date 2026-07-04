@@ -659,3 +659,34 @@ def test_cli_strict_mode_returns_failure_for_needs_review(tmp_path, monkeypatch,
     assert code == 1
     assert payload["status"] == "failed"
     assert any("strict_finalization_failed" in item for item in payload["blocking_items"])
+
+
+def test_cli_sample_mode_truncated_is_passed_to_pipeline(tmp_path, monkeypatch, capsys):
+    import scripts.run_pipeline as cli
+
+    source = tmp_path / "source.docx"
+    source.write_bytes(b"docx")
+    output = tmp_path / "output"
+    captured = {}
+
+    def fake_run_pipeline(source_arg, output_arg, **kwargs):
+        captured["source"] = source_arg
+        captured["output"] = output_arg
+        captured.update(kwargs)
+        return {
+            "status": "needs_review",
+            "outputs": {},
+            "summary": {},
+            "blocking_items": [],
+            "manual_review": [],
+            "notes": [],
+        }
+
+    monkeypatch.setattr(cli, "run_pipeline", fake_run_pipeline)
+
+    code = cli.main([str(source), "--out", str(output), "--sample-mode", "truncated"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["status"] == "needs_review"
+    assert captured["sample_mode"] == "truncated"

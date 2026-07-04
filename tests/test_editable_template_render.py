@@ -4,7 +4,7 @@ from xml.etree import ElementTree as ET
 
 from docx import Document
 
-from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
+from buaa_thesis_kit.editable_template_render import _body_sections, render_editable_buaa_docx
 from buaa_thesis_kit.models import AssetItem, ContentBlock, EquationItem, Metadata, ThesisModel
 
 
@@ -228,14 +228,25 @@ def test_render_editable_buaa_docx_generates_front_matter_and_toc_before_body(tm
     document = Document(str(output))
     paragraphs = list(document.paragraphs)
     paragraph_texts = [paragraph.text for paragraph in paragraphs]
-    for marker in ("本科毕业设计（论文）任务书", "本人声明", "摘    要", "Abstract", "目录", "1 Introduction"):
+    toc_text = next(text for text in paragraph_texts if text.replace(" ", "") == "目录")
+    for marker in ("本科毕业设计（论文）任务书", "本人声明", "摘    要", "Abstract", toc_text, "1 Introduction"):
         assert marker in paragraph_texts
     assert paragraph_texts.index("本科毕业设计（论文）任务书") < paragraph_texts.index("本人声明")
     assert paragraph_texts.index("本人声明") < paragraph_texts.index("摘    要")
     assert paragraph_texts.index("摘    要") < paragraph_texts.index("Abstract")
-    assert paragraph_texts.index("Abstract") < paragraph_texts.index("目录")
-    assert paragraph_texts.index("目录") < paragraph_texts.index("1 Introduction")
+    assert paragraph_texts.index("Abstract") < paragraph_texts.index(toc_text)
+    assert paragraph_texts.index(toc_text) < paragraph_texts.index("1 Introduction")
     document_xml = _document_xml(output)
+    for marker in (
+        "Ⅰ、毕业设计（论文）题目：",
+        "Ⅱ、毕业设计（论文）使用的原始资料（数据）及设计技术要求：",
+        "Ⅲ、毕业设计（论文）工作内容：",
+        "Ⅳ、主要参考资料：",
+    ):
+        assert marker in document_xml
+    assert "我声明，本论文及其研究工作是由本人在导师指导下独立完成的" in document_xml
+    assert "本人郑重声明" not in document_xml
+    assert "指导教师签名" not in document_xml
     assert document_xml.count("<w:sectPr") >= 6
     assert '<w:pgNumType w:fmt="upperRoman" w:start="1"' in document_xml
     assert '<w:pgNumType w:fmt="decimal" w:start="1"' in document_xml
@@ -369,6 +380,37 @@ def test_render_editable_buaa_docx_inlines_captioned_figures_near_body_caption(t
     visible_text = "\n".join(text for text, _has_drawing in items)
     assert "[Figure inserted]" not in visible_text
     assert str(image_path) not in visible_text
+
+
+def test_body_sections_filter_pdf_front_matter_residue():
+    sections = [
+        ContentBlock(
+            id="cover-residue",
+            type="chapter",
+            title="1 分类号",
+            text="TN953\n毕业设计(论文)\n学院名称\n沈元学院\n学生姓名\n宋郭睿",
+            level=1,
+        ),
+        ContentBlock(
+            id="spine-residue",
+            type="chapter",
+            title="2024 年6 月",
+            text="论文封面书脊\n四号黑体字",
+            level=1,
+        ),
+        ContentBlock(
+            id="task-residue",
+            type="chapter",
+            title="Ⅱ、毕业设计（论文）使用的原始资料（数据）及设计技术要求：",
+            text="实验室具有计算机硬件以及python软件开发平台。",
+            level=1,
+        ),
+        ContentBlock(id="body", type="section", title="1.1 课题来源", text="正文内容。", level=2),
+    ]
+
+    rendered = _body_sections(sections)
+
+    assert [section.title for section in rendered] == ["1.1 课题来源"]
 
 
 def test_render_editable_buaa_docx_inlines_figures_when_pdf_caption_is_split(tmp_path):

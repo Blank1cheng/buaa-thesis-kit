@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from buaa_thesis_kit.docx_extract import extract_thesis_model
+from buaa_thesis_kit.frontmatter_render.render_taskbook import (
+    build_task_book_model,
+    task_book_review_items,
+)
 from buaa_thesis_kit.graph import GraphRunner, GraphState, NodeResult
 from buaa_thesis_kit.graph_nodes import (
     apply_word_fixes,
@@ -48,8 +52,10 @@ def run_pipeline(
     template_path: Path | None = None,
     keep_work: bool = False,
     strict: bool = False,
+    sample_mode: str = "full",
 ) -> dict[str, Any]:
     """Run the BUAA thesis repair-first graph pipeline."""
+    sample_mode = _normalize_sample_mode(sample_mode)
     source_path = Path(source).expanduser().resolve(strict=False)
     output_root = _prepare_output_dir(Path(output_dir), source_path)
     image_dir = output_root / "image"
@@ -95,6 +101,7 @@ def run_pipeline(
             output_root=output_root,
             work_dir=work_dir,
             template_path=word_template,
+            sample_mode=sample_mode,
             outputs=outputs,
         )
         state.notes.extend(notes)
@@ -539,6 +546,7 @@ def _model_failed_message(model: ThesisModel) -> str:
 def _manual_review_items(model: ThesisModel, tex_needs_review: bool) -> list[str]:
     items: list[str] = []
     items.extend(f"Extraction warning: {warning}" for warning in model.extraction_warnings)
+    items.extend(task_book_review_items(build_task_book_model(model)))
     if model.status == "needs_review":
         items.append("Model status needs_review: extracted content requires manual review.")
     for figure in model.figures:
@@ -636,6 +644,13 @@ def _strict_blocking_items(
         + ". Resolve all review items before final submission."
     )
     return result
+
+
+def _normalize_sample_mode(sample_mode: str) -> str:
+    value = str(sample_mode or "full").strip().lower().replace("-", "_")
+    if value not in {"full", "truncated"}:
+        raise ValueError(f"Unsupported sample mode: {sample_mode}")
+    return value
 
 
 def _dedupe(items: list[str]) -> list[str]:
