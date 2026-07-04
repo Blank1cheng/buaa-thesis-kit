@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import base64
+import json
 import zipfile
 import fitz
 from docx import Document
@@ -508,7 +509,20 @@ def test_pipeline_report_records_graph_history_and_spine_repair(tmp_path, monkey
         _write_valid_pdf(target)
         return True, "stubbed Word PDF export"
 
+    def pass_validate_output_text_file(candidate, output_report=None):
+        report = {
+            "status": "pass",
+            "candidate": str(candidate),
+            "failures": [],
+            "counts": {},
+        }
+        if output_report is not None:
+            Path(output_report).parent.mkdir(parents=True, exist_ok=True)
+            output_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return report
+
     monkeypatch.setattr(pipeline, "export_pdf_from_docx", stub_pdf_export)
+    monkeypatch.setattr(pipeline, "validate_output_text_file", pass_validate_output_text_file)
 
     report = pipeline.run_pipeline(source, output)
 

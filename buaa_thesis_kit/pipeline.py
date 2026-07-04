@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
+import json
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from buaa_thesis_kit.graph_nodes import (
     plan_minimal_fixes,
     visual_compare,
 )
+from buaa_thesis_kit.harness.validators import validate_model_file, validate_output_text_file
 from buaa_thesis_kit.models import EquationItem, ThesisModel
 from buaa_thesis_kit.pdf_extract import extract_pdf_model
 from buaa_thesis_kit.pdf_export import export_pdf_from_docx
@@ -35,14 +37,23 @@ from buaa_thesis_kit.word_convert import convert_doc_to_docx
 
 
 DEFAULT_DOCX_TEMPLATE = (
+    Path(__file__).resolve().parents[1] / "templates" / "official" / "buaa_undergraduate_template_instrumented.docx"
+)
+DEFAULT_OFFICIAL_TEMPLATE = (
+    Path(__file__).resolve().parents[1] / "templates" / "official" / "buaa_undergraduate_template.docx"
+)
+LEGACY_DOCX_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "templates" / "buaa_undergraduate_thesis_template.docx"
 )
 PUBLIC_OUTPUT_STATUSES = {
+    "harness": "missing",
     "word": "missing",
     "pdf": "missing",
     "tex": "missing",
     "report.md": "pass",
     "image": "missing",
+    "model.json": "missing",
+    "template_inheritance_report.json": "missing",
 }
 
 
@@ -95,7 +106,7 @@ def run_pipeline(
         if keep_work:
             notes.append(f"Work directory retained: {work_dir}")
 
-        word_template = Path(template_path) if template_path is not None else DEFAULT_DOCX_TEMPLATE
+        word_template = _resolve_word_template(Path(template_path) if template_path is not None else None)
         state = GraphState(
             source_path=source_path,
             output_root=output_root,
@@ -111,6 +122,9 @@ def run_pipeline(
         graph = GraphRunner(_pipeline_nodes(source_suffix, image_dir), start_node="ingest")
         state = graph.run(state)
         model = state.model
+        model_json = output_root / "model.json"
+        _write_model_json(model, model_json)
+        state.outputs["model.json"] = _file_status(model_json)
         state.notes.append(f"Graph nodes executed: {' -> '.join(state.history)}")
 
         return _finalize_report(
@@ -166,7 +180,23 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
         except Exception as exc:  # python-docx/ZIP/XML failures are reported, not leaked.
             state.model = ThesisModel(status="failed")
             state.model.extraction_warnings.append(f"extraction failed unexpectedly: {exc}")
-        return inspect_source_features(state)
+        return NodeResult(next_node="validate_model")
+
+    def validate_model_gate(state: GraphState) -> NodeResult:
+        model_json = state.output_root / "model.json"
+        _write_model_json(state.model, model_json)
+        state.outputs["model.json"] = _file_status(model_json)
+        report = validate_model_file(
+            model_json,
+            sample_mode=state.sample_mode,
+            output_report=state.output_root / "harness" / "model_validation_report.json",
+        )
+        _record_harness_stage(state, "model", "model_validation_report.json", report)
+        if report["status"] != "pass":
+            state.blocking_items.append(f"harness_model_failed: {_failure_ids(report)}")
+            return NodeResult(next_node="finalize_output")
+        state.notes.append("Harness model validation passed.")
+        return NodeResult(next_node="inspect_source_features")
 
     def export_pdf(state: GraphState) -> NodeResult:
         state.notes.extend(_copy_final_figure_assets(state.model, image_dir))
@@ -185,6 +215,18 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
             state.outputs["word"] = "failed"
             state.blocking_items.append("Word DOCX generation failed: no authoritative DOCX was produced.")
 
+        if state.outputs["word"] in {"pass", "needs_review"}:
+            output_text_report = validate_output_text_file(
+                thesis_docx,
+                state.output_root / "harness" / "output_text_report.json",
+            )
+            _record_harness_stage(state, "output_text", "output_text_report.json", output_text_report)
+            if output_text_report["status"] != "pass":
+                state.blocking_items.append(f"harness_output_text_failed: {_failure_ids(output_text_report)}")
+                state.outputs["pdf"] = "failed"
+                state.outputs["tex"] = "failed"
+                return NodeResult(next_node="visual_compare")
+
         thesis_tex = state.output_root / "thesis.tex"
         tex_needs_review = False
         try:
@@ -201,12 +243,36 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
             if pdf_ok:
                 state.outputs["pdf"] = "pass"
                 state.notes.append(pdf_message)
+                state.notes.extend(_write_template_diff_preview(thesis_pdf, state.output_root))
             else:
                 state.outputs["pdf"] = "failed"
                 state.blocking_items.append(f"PDF export blocking: {pdf_message}")
         else:
             state.outputs["pdf"] = "failed"
             state.blocking_items.append("PDF export skipped: thesis.docx was not generated successfully.")
+
+        if _is_in_place_template(state.template_path) and thesis_docx.exists():
+            try:
+                from scripts.validate_template_inheritance import validate_template_inheritance
+
+                inheritance_path = state.output_root / "template_inheritance_report.json"
+                inheritance = validate_template_inheritance(
+                    state.template_path,
+                    thesis_docx,
+                    inheritance_path,
+                    word_com_finalized=state.outputs.get("pdf") == "pass",
+                )
+                state.outputs["template_inheritance_report.json"] = _file_status(inheritance_path)
+                if inheritance["status"] != "pass":
+                    state.blocking_items.append("template_inheritance_failed")
+                else:
+                    state.notes.append("Template inheritance validation passed.")
+            except Exception as exc:
+                state.outputs["template_inheritance_report.json"] = "failed"
+                state.blocking_items.append(f"Template inheritance validation failed: {exc}")
+        elif thesis_docx.exists():
+            state.outputs["template_inheritance_report.json"] = "missing"
+            state.manual_review.append("Template inheritance validation skipped: official instrumented template unavailable.")
 
         state.manual_review.extend(_manual_review_items(state.model, tex_needs_review))
         return NodeResult(next_node="visual_compare")
@@ -218,6 +284,8 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
         "ingest": ingest,
         "profile_reference": profile_reference,
         "inspect_source": inspect_source,
+        "validate_model": validate_model_gate,
+        "inspect_source_features": inspect_source_features,
         "diagnose_compliance": diagnose_compliance,
         "plan_minimal_fixes": plan_minimal_fixes,
         "apply_word_fixes": apply_word_fixes,
@@ -436,6 +504,95 @@ def _safe_display_path(path: Path) -> str:
 
 def _file_status(path: Path) -> str:
     return "pass" if path.exists() and path.is_file() and path.stat().st_size > 0 else "failed"
+
+
+def _write_model_json(model: ThesisModel, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(model.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _record_harness_stage(state: GraphState, stage: str, report_name: str, report: dict[str, Any]) -> None:
+    harness_dir = state.output_root / "harness"
+    harness_dir.mkdir(parents=True, exist_ok=True)
+    report_path = harness_dir / report_name
+    if not report_path.exists():
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.harness_stages.append({"stage": stage, "status": str(report.get("status", "failed")), "report": str(report_path)})
+    failed_stage = next((item["stage"] for item in state.harness_stages if item["status"] != "pass"), None)
+    harness_status = "failed" if failed_stage else "pass"
+    state.outputs["harness"] = harness_status
+    status_report = {
+        "status": harness_status,
+        "failed_stage": failed_stage,
+        "stages": state.harness_stages,
+    }
+    (harness_dir / "status.json").write_text(json.dumps(status_report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _failure_ids(report: dict[str, Any]) -> str:
+    failures = report.get("failures", [])
+    ids = [str(item.get("id", item.get("rule", "unknown"))) for item in failures if isinstance(item, dict)]
+    return ", ".join(ids) if ids else "unknown"
+
+
+def _write_template_diff_preview(thesis_pdf: Path, output_root: Path) -> list[str]:
+    """Render a stable PNG preview for visual template review."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except ImportError as exc:
+        return [f"Template diff preview skipped: PyMuPDF unavailable: {exc}"]
+
+    if not thesis_pdf.exists():
+        return [f"Template diff preview skipped: missing PDF: {thesis_pdf.name}"]
+
+    diff_dir = output_root / "template_diff"
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with fitz.open(str(thesis_pdf)) as document:
+            if document.page_count == 0:
+                return ["Template diff preview skipped: PDF has no pages."]
+            page = document.load_page(0)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            preview_path = diff_dir / "candidate_page_001.png"
+            pixmap.save(str(preview_path))
+    except Exception as exc:
+        return [f"Template diff preview failed: {exc}"]
+    return [f"Template diff preview written: {preview_path}"]
+
+
+def _resolve_word_template(template_path: Path | None) -> Path:
+    if template_path is not None:
+        return _instrument_if_official_raw(template_path)
+    if DEFAULT_DOCX_TEMPLATE.exists():
+        return DEFAULT_DOCX_TEMPLATE
+    if DEFAULT_OFFICIAL_TEMPLATE.exists():
+        return _instrument_if_official_raw(DEFAULT_OFFICIAL_TEMPLATE)
+    return LEGACY_DOCX_TEMPLATE
+
+
+def _instrument_if_official_raw(template_path: Path) -> Path:
+    candidate = Path(template_path)
+    if _is_in_place_template(candidate):
+        return candidate
+    if candidate.resolve(strict=False) == DEFAULT_OFFICIAL_TEMPLATE.resolve(strict=False):
+        from scripts.instrument_official_template import instrument_official_template
+
+        instrument_official_template(candidate, DEFAULT_DOCX_TEMPLATE)
+        return DEFAULT_DOCX_TEMPLATE
+    return candidate
+
+
+def _is_in_place_template(template_path: Path | None) -> bool:
+    if template_path is None or not Path(template_path).exists():
+        return False
+    try:
+        import zipfile
+
+        with zipfile.ZipFile(template_path) as package:
+            document_xml = package.read("word/document.xml").decode("utf-8", errors="ignore")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    return "{{BODY_START}}" in document_xml and "{{BODY_END}}" in document_xml
 
 
 def _tex_contains_review_markers(path: Path) -> bool:

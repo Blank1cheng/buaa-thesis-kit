@@ -10,13 +10,13 @@
 
 ## 3. 模板填充
 
-使用 `templates/buaa_undergraduate_thesis_template.docx` 生成权威 Word 输出，使用 `templates/buaa_undergraduate_thesis_template.tex` 生成辅助 TeX。PDF 输入也必须生成可编辑 Word：封面、书脊、任务书和正文由模板文本渲染，不得把整页 PDF 截图嵌入最终 Word。中文摘要页使用 `摘    要` 和 `关键词：`，英文摘要页使用 `Abstract` 和 `Key Words:`，中英文摘要必须分页。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
+使用官方模板原位编辑生成权威 Word 输出：`scripts/prepare_official_template.py` 先把 `附件1-北航本科论文模板.doc` 转为 `templates/official/buaa_undergraduate_template.docx`，`scripts/instrument_official_template.py` 再生成 `templates/official/buaa_undergraduate_template_instrumented.docx`。主流程复制这份 instrumented 模板到 `output/thesis.docx`，随后只在副本内部替换 placeholder 和正文范围。旧的 `templates/buaa_undergraduate_thesis_template.docx` 只能作为兼容兜底，不是最终版式来源。PDF 输入也必须生成可编辑 Word：封面、书脊、任务书、声明、摘要、目录和正文 section 来自官方模板原位替换，不得把整页 PDF 截图嵌入最终 Word。中文摘要页使用 `摘    要` 和 `关键词：`，英文摘要页使用 `Abstract` 和 `Key Words:`，中英文摘要必须分页。图片和公式截图等资源统一放入 `output/image`，Word 内嵌资源，TeX 使用相对路径。
 
 模板填充必须保持固定顺序：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。目录由 Word TOC 域生成，导出 PDF 前必须更新域；不得把源 PDF/DOCX 的目录文本作为正文复制。已经渲染到任务书、声明、摘要、目录或封面的内容必须从正文 section 中过滤，避免重复。
 
-封面、书脊、任务书、声明、摘要和目录必须走 render-first 前置页流程，不能回退为普通段落堆叠。入口是 `front_matter_renderer`，可复用能力在 `frontmatter_render/`：`replace_placeholders.py` 必须能替换 document/header/footer/textbox 中跨 run 的占位符；`capture_reference.py` 用于从参考 DOCX 捕获模板页；`validate_render.py` 用于渲染级回归。固定校徽和北航字标来自 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；书脊使用竖排文本框 `w:textDirection="tbRl"`，不显示横排 `书脊` 或 `Book Spine` 调试字样。任务书必须包含 I/II/III/IV 参考版分区，声明页必须使用参考版“我声明，本论文及其研究工作……”文本，不能出现额外 `指导教师签名`。摘要和目录使用罗马页码 section，正文 section 必须 `start=1` 重新编号。
+封面、书脊、任务书、声明、摘要和目录必须来自官方模板原位替换，不能回退为普通段落堆叠，也不能走 fragment merge。`template_engine/placeholder_replace.py` 必须能替换 document/header/footer/textbox 中跨 run 的占位符。`assemble_in_place.py` 只允许复制 instrumented 模板、替换内容、删除 `{{BODY_START}}` 到 `{{BODY_END}}` 之间的官方示例正文并插入 thesis model；不得新建前置页、不得导入 header/footer、不得重写 styles/numbering/section。书脊使用官方模板竖排文本框，不显示横排 `书脊` 或 `Book Spine` 调试字样。任务书和声明页保留官方结构，声明使用官方短声明，不能出现额外 `指导教师签名`。目录必须保留 Word TOC 域，手写目录条目不得进入正文。
 
-交付前运行 `python scripts/validate_front_matter.py <reference.docx> output/thesis.docx --sample-mode truncated` 和 `python scripts/validate_frontmatter_render.py --reference <reference.pdf|docx> --candidate output/thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output/frontmatter_diff`。结构脚本至少检查封面字段、竖排书脊、任务书 I/II/III/IV、声明文本、中英文摘要分离、TOC 域、前置页罗马页码、正文页码重启，以及旧调试标记/本地路径是否进入 Word 正文。渲染脚本输出 `frontmatter_diff/report.json`、`page_001_overlay.png`、`page_001_diff.png`、`page_001_anchors.json`，用于后续像素级 anchor 收敛。`truncated` 模式只关闭正文/参考文献完整性要求，不关闭 front matter 渲染、泄漏和可编辑性检查。
+交付前运行 `python scripts/validate_template_inheritance.py --base templates/official/buaa_undergraduate_template_instrumented.docx --candidate output/thesis.docx --out output/template_inheritance_report.json --word-com-finalized`。继承性报告必须证明 `created_by_copying_base=true`、`styles_xml_changed=false`、`numbering_xml_changed=false`、`toc_field_exists=true`、`page_number_fields_exist=true`、`header_footer_as_body_text=false`、`frontmatter_generated_by_add_paragraph=false`、`fragment_merge_used=false`。需要调试几何差异时，再运行 `python scripts/validate_front_matter.py <reference.docx> output/thesis.docx --sample-mode truncated` 和 `python scripts/validate_frontmatter_render.py --reference <reference.pdf|docx> --candidate output/thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output/template_diff`。`truncated` 模式只关闭正文/参考文献完整性要求，不关闭 front matter 渲染、泄漏和可编辑性检查。
 
 DOCX 自动编号丢失时，可从后续 `1.1`、`2.1` 等小节推断一级标题编号并恢复为 `1 绪论` 这类标题。章末总结句，例如 `第一章 绪论。本章介绍...`，应保持为正文段落，不能当成新章标题或分页触发器。
 
@@ -28,7 +28,7 @@ DOCX 自动编号丢失时，可从后续 `1.1`、`2.1` 等小节推断一级标
 
 ## 5. 最终交付
 
-只公开以下路径：`output/thesis.docx`、`output/thesis.pdf`、`output/thesis.tex`、`output/report.md`、`output/image/`。交付前检查 DOCX 可打开、PDF 来自最新 Word、TeX 无乱码、图片路径有效、报告无空白占位。
+只公开以下路径：`output/thesis.docx`、`output/thesis.pdf`、`output/thesis.tex`、`output/report.md`、`output/model.json`、`output/template_inheritance_report.json`、`output/template_diff/`、`output/image/`。交付前检查 DOCX 可打开、PDF 来自最新 Word、TeX 无乱码、图片路径有效、报告无空白占位，且继承性报告为 `pass`。
 
 ## 6. Editability Audit and strict finalization
 

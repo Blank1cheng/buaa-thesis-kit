@@ -8,13 +8,33 @@ import fitz
 from docx import Document
 from pypdf import PdfWriter
 
-from buaa_thesis_kit.models import EquationItem, ThesisModel
+from buaa_thesis_kit.models import ContentBlock, EquationItem, ThesisModel
 from buaa_thesis_kit.validate import validate_clean_output
 
 
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+SUCCESS_OUTPUT_NAMES = [
+    "harness",
+    "image",
+    "model.json",
+    "report.md",
+    "template_diff",
+    "template_inheritance_report.json",
+    "thesis.docx",
+    "thesis.pdf",
+    "thesis.tex",
+]
+WORD_NO_PDF_OUTPUT_NAMES = [
+    "harness",
+    "image",
+    "model.json",
+    "report.md",
+    "template_inheritance_report.json",
+    "thesis.docx",
+    "thesis.tex",
+]
 
 
 def _write_valid_pdf(path: Path) -> None:
@@ -169,6 +189,33 @@ def _public_names(output_dir: Path) -> list[str]:
     return sorted(path.name for path in output_dir.iterdir())
 
 
+def _assert_success_output_contract(output: Path) -> None:
+    assert _public_names(output) == SUCCESS_OUTPUT_NAMES
+
+
+def _assert_word_no_pdf_output_contract(output: Path) -> None:
+    assert _public_names(output) == WORD_NO_PDF_OUTPUT_NAMES
+
+
+@pytest.fixture(autouse=True)
+def _default_pipeline_output_text_harness_pass(monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    def pass_validate_output_text_file(candidate, output_report=None):
+        report = {
+            "status": "pass",
+            "candidate": str(candidate),
+            "failures": [],
+            "counts": {},
+        }
+        if output_report is not None:
+            Path(output_report).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(pipeline, "validate_output_text_file", pass_validate_output_text_file)
+
+
 def test_run_pipeline_success_writes_clean_contract_and_removes_work_dir(tmp_path, monkeypatch):
     import buaa_thesis_kit.pipeline as pipeline
 
@@ -184,16 +231,90 @@ def test_run_pipeline_success_writes_clean_contract_and_removes_work_dir(tmp_pat
     report = pipeline.run_pipeline(source, output)
 
     assert report["status"] == "needs_review"
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    _assert_success_output_contract(output)
     ok, messages = validate_clean_output(output)
     assert ok is True
     assert messages == []
     assert not (output / "old-debug.json").exists()
     assert not (output / "image" / "manifest.json").exists()
+    assert any((output / "template_diff").glob("*.png"))
     assert not list(tmp_path.glob("output_work*"))
     assert any("figure" in item.lower() for item in report["manual_review"])
     assert any("tex" in item.lower() for item in report["manual_review"])
     assert "image/" in (output / "thesis.tex").read_text(encoding="utf-8")
+
+
+def test_run_pipeline_model_harness_failure_blocks_word_generation(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source.docx"
+    output = tmp_path / "output"
+    _write_source_docx(source)
+    poisoned_model = ThesisModel(
+        sections=[
+            ContentBlock(
+                id="bad-template-leak",
+                type="chapter",
+                title="论文封面书脊",
+                text="王小亮 MERGEFORMAT",
+                level=1,
+            )
+        ]
+    )
+
+    monkeypatch.setattr(pipeline, "extract_thesis_model", lambda _path, _work_dir: poisoned_model)
+
+    def unexpected_apply_word_fixes(_state):
+        raise AssertionError("apply_word_fixes must not run after model harness failure")
+
+    monkeypatch.setattr(pipeline, "apply_word_fixes", unexpected_apply_word_fixes)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "failed"
+    assert not (output / "thesis.docx").exists()
+    model_report = json.loads((output / "harness" / "model_validation_report.json").read_text(encoding="utf-8"))
+    status = json.loads((output / "harness" / "status.json").read_text(encoding="utf-8"))
+    assert model_report["status"] == "failed"
+    assert status["failed_stage"] == "model"
+    assert any("harness_model_failed" in item for item in report["blocking_items"])
+
+
+def test_run_pipeline_output_text_harness_failure_blocks_pdf_export(tmp_path, monkeypatch):
+    import buaa_thesis_kit.pipeline as pipeline
+
+    source = tmp_path / "source.docx"
+    output = tmp_path / "output"
+    _write_source_docx(source)
+
+    def fake_validate_output_text_file(_candidate, output_report=None):
+        report = {
+            "status": "failed",
+            "candidate": str(_candidate),
+            "failures": [{"id": "body_contains_template_page_number_48"}],
+            "counts": {},
+        }
+        if output_report is not None:
+            Path(output_report).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return report
+
+    def unexpected_pdf_export(_source, _target):
+        raise AssertionError("PDF export must not run after output_text harness failure")
+
+    monkeypatch.setattr(pipeline, "validate_output_text_file", fake_validate_output_text_file, raising=False)
+    monkeypatch.setattr(pipeline, "export_pdf_from_docx", unexpected_pdf_export)
+
+    report = pipeline.run_pipeline(source, output)
+
+    assert report["status"] == "failed"
+    assert (output / "thesis.docx").is_file()
+    assert not (output / "thesis.pdf").exists()
+    output_text_report = json.loads((output / "harness" / "output_text_report.json").read_text(encoding="utf-8"))
+    status = json.loads((output / "harness" / "status.json").read_text(encoding="utf-8"))
+    assert output_text_report["status"] == "failed"
+    assert status["failed_stage"] == "output_text"
+    assert any("harness_output_text_failed" in item for item in report["blocking_items"])
 
 
 def test_run_pipeline_pdf_failure_reports_blocking_without_process_files(tmp_path, monkeypatch):
@@ -207,13 +328,24 @@ def test_run_pipeline_pdf_failure_reports_blocking_without_process_files(tmp_pat
     report = pipeline.run_pipeline(source, output)
 
     assert report["status"] == "failed"
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.tex"]
+    _assert_word_no_pdf_output_contract(output)
     assert (output / "thesis.docx").is_file()
     assert (output / "thesis.tex").is_file()
     assert not (output / "thesis.pdf").exists()
     assert any("pdf export" in item.lower() for item in report["blocking_items"])
     assert any("thesis.pdf" in item for item in report["blocking_items"])
-    assert not any(path.name.endswith((".json", ".log", ".tmp")) for path in output.rglob("*") if path.is_file())
+    allowed_json = {
+        "model.json",
+        "template_inheritance_report.json",
+        "model_validation_report.json",
+        "output_text_report.json",
+        "status.json",
+    }
+    assert not any(
+        path.name.endswith((".log", ".tmp")) or (path.suffix == ".json" and path.name not in allowed_json)
+        for path in output.rglob("*")
+        if path.is_file()
+    )
     report_text = (output / "report.md").read_text(encoding="utf-8")
     assert "Word PDF export unavailable" in report_text
     assert "Missing required output: thesis.pdf" in report_text
@@ -235,7 +367,7 @@ def test_run_pipeline_keep_work_retains_adjacent_work_dir_and_keeps_public_outpu
     assert report["status"] == "needs_review"
     assert work_dir.is_dir()
     assert (work_dir / "source.docx").is_file()
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    _assert_success_output_contract(output)
     ok, messages = validate_clean_output(output)
     assert ok is True
     assert messages == []
@@ -252,7 +384,7 @@ def test_run_pipeline_text_pdf_input_writes_clean_contract(tmp_path, monkeypatch
     report = pipeline.run_pipeline(source, output)
 
     assert report["status"] == "needs_review"
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    _assert_success_output_contract(output)
     ok, messages = validate_clean_output(output)
     assert ok is True
     assert messages == []
@@ -278,7 +410,7 @@ def test_run_pipeline_strict_mode_fails_when_review_items_remain(tmp_path, monke
 
     assert report["status"] == "failed"
     assert any("strict_finalization_failed" in item for item in report["blocking_items"])
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    _assert_success_output_contract(output)
     assert "strict_finalization_failed" in (output / "report.md").read_text(encoding="utf-8")
 
 
@@ -454,7 +586,7 @@ def test_run_pipeline_doc_input_converts_to_docx_before_extraction(tmp_path, mon
     report = pipeline.run_pipeline(source, output)
 
     assert report["status"] in {"pass", "needs_review"}
-    assert _public_names(output) == ["image", "report.md", "thesis.docx", "thesis.pdf", "thesis.tex"]
+    _assert_success_output_contract(output)
     ok, messages = validate_clean_output(output)
     assert ok is True
     assert messages == []

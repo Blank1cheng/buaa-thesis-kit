@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
 from docx import Document
 
+from buaa_thesis_kit.assemble_in_place import assemble_in_place
 from buaa_thesis_kit.docx_acceptance import inspect_docx_output
 from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
 from buaa_thesis_kit.figure_table_acceptance import inspect_figure_tables
@@ -68,44 +70,51 @@ def plan_minimal_fixes(state: GraphState) -> NodeResult:
 def apply_word_fixes(state: GraphState) -> NodeResult:
     state.work_dir.mkdir(parents=True, exist_ok=True)
     repaired_docx = state.work_dir / "repaired.docx"
+    used_in_place_template = _template_has_in_place_markers(state.template_path)
 
     if state.source_kind == "docx":
         if state.template_path is None:
             state.blocking_items.append("Editable Word template generation failed: missing Word template.")
             return NodeResult(next_node="export_pdf")
-        try:
-            render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
-        except Exception as exc:
-            state.blocking_items.append(f"Editable Word template generation failed: {exc}")
-            return NodeResult(next_node="export_pdf")
-        state.notes.append(
-            "Editable BUAA template Word generated from extracted Word content."
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Editable Word template generation failed",
         )
-        document = Document(str(repaired_docx))
+        if document is None:
+            return NodeResult(next_node="export_pdf")
+        state.notes.append("Editable BUAA template Word generated from extracted Word content.")
     elif state.source_kind == "pdf":
         if state.template_path is None:
             state.blocking_items.append("Editable PDF-to-Word generation failed: missing Word template.")
             return NodeResult(next_node="export_pdf")
-        try:
-            render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
-        except Exception as exc:
-            state.blocking_items.append(f"Editable PDF-to-Word template generation failed: {exc}")
-            return NodeResult(next_node="export_pdf")
-        state.notes.append(
-            "Editable BUAA template Word generated from extracted PDF content."
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Editable PDF-to-Word template generation failed",
         )
+        if document is None:
+            return NodeResult(next_node="export_pdf")
+        state.notes.append("Editable BUAA template Word generated from extracted PDF content.")
         state.manual_review.append(
             "PDF source requires manual review for equations, figures, and any layout not recoverable as editable Word objects."
         )
-        document = Document(str(repaired_docx))
     else:
         if state.template_path is None:
             state.blocking_items.append("Word repair failed: missing template for non-DOCX source.")
             return NodeResult(next_node="export_pdf")
-        fill_word_template(state.template_path, state.model, repaired_docx)
-        document = Document(str(repaired_docx))
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Word repair failed",
+        )
+        if document is None:
+            return NodeResult(next_node="export_pdf")
 
-    if "insert_spine" in state.repair_actions and not _document_has_spine(document):
+    if used_in_place_template:
+        _append_once(state.applied_repairs, "insert_spine")
+        _append_once(state.notes, "Applied repair insert_spine by preserving official template spine in place.")
+    elif "insert_spine" in state.repair_actions and not _document_has_spine(document):
         _append_spine_page(document, state.model.metadata)
         _append_once(state.applied_repairs, "insert_spine")
         _append_once(state.notes, "Applied repair insert_spine for missing_spine.")
@@ -113,10 +122,52 @@ def apply_word_fixes(state: GraphState) -> NodeResult:
         _append_once(state.applied_repairs, "insert_spine")
         _append_once(state.notes, "Applied repair insert_spine via BUAA editable template.")
 
-    document.save(str(repaired_docx))
+    if not used_in_place_template:
+        document.save(str(repaired_docx))
     state.authoritative_docx = repaired_docx
     state.outputs["word"] = "pass" if repaired_docx.exists() and repaired_docx.stat().st_size > 0 else "failed"
     return NodeResult(next_node="export_pdf")
+
+
+def _render_authoritative_docx_in_place_or_legacy(
+    state: GraphState,
+    repaired_docx: Path,
+    *,
+    error_prefix: str,
+):
+    if state.template_path is not None and _template_has_in_place_markers(state.template_path):
+        try:
+            assemble_in_place(state.template_path, state.model, repaired_docx, style_map_path=_style_map_path(state.template_path))
+        except Exception as exc:
+            state.blocking_items.append(f"{error_prefix}: {exc}")
+            return None
+        return Document(str(repaired_docx))
+
+    try:
+        render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
+    except Exception as exc:
+        state.blocking_items.append(f"{error_prefix}: {exc}")
+        return None
+    state.manual_review.append("Legacy non-instrumented template path used; official in-place template was not available.")
+    return Document(str(repaired_docx))
+
+
+def _template_has_in_place_markers(template_path: Path | None) -> bool:
+    if template_path is None or not Path(template_path).exists():
+        return False
+    try:
+        with zipfile.ZipFile(template_path) as package:
+            document_xml = package.read("word/document.xml").decode("utf-8", errors="ignore")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    return "{{BODY_START}}" in document_xml and "{{BODY_END}}" in document_xml
+
+
+def _style_map_path(template_path: Path | None) -> Path | None:
+    if template_path is None:
+        return None
+    candidate = Path(template_path).with_name("style_map.json")
+    return candidate if candidate.exists() else None
 
 
 def visual_compare(state: GraphState) -> NodeResult:

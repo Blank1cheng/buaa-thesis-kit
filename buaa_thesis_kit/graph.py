@@ -35,6 +35,7 @@ class GraphState:
     blocking_items: list[str] = field(default_factory=list)
     manual_review: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    harness_stages: list[dict[str, str]] = field(default_factory=list)
     editability: dict[str, int] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     retry_count: int = 0

@@ -12,6 +12,10 @@ generated/
 *.tmp
 *.log
 
+# Generated from the official school Word template; regenerate locally with scripts.
+templates/official/
+templates/render_fragments/
+
 .venv/
 venv/
 env/

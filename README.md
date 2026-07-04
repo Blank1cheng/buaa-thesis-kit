@@ -6,13 +6,39 @@ TeX 和图片目录。
 
 ## 核心策略
 
-当前流水线采用 `repair-first`：
+当前流水线采用 `official-template-in-place + repair-first`：
 
-1. 优先复制并修复源 Word，尽量保留原文档版面、正文结构、图片、表格和公式对象。
-2. 对 PDF 输入，先抽取可编辑文本、封面元数据和结构边界，再套用同一套 Word 模板生成可编辑 DOCX；不得把整页截图作为最终 Word 正文。
-3. 对缺失的规范项生成类型化 finding，例如 `missing_spine`、`spine_metadata_missing`。
-4. 修复失败或视觉/合规判断未收敛时，通过 graph 回环重试；超过上限后失败退出。
-5. 过程文件默认写入临时目录并删除，最终公开目录只保留验收产物。
+1. 官方 Word 模板是唯一版式来源：先把 `附件1-北航本科论文模板.doc` 转成 `templates/official/buaa_undergraduate_template.docx`，再 instrument 成 `templates/official/buaa_undergraduate_template_instrumented.docx`。
+2. 优先复制并修复源 Word，尽量保留原文档版面、正文结构、图片、表格和公式对象。
+3. 对 PDF 输入，先抽取可编辑文本、封面元数据和结构边界，再把 thesis model 原位填入官方 instrumented 模板；不得把整页截图作为最终 Word 正文。
+4. 封面、书脊、任务书、声明、摘要、目录和正文 section 不再靠代码手写版式，必须继承官方模板的 OOXML、section、页眉页脚、样式、编号和 media。
+5. 对缺失的规范项生成类型化 finding，例如 `missing_spine`、`spine_metadata_missing`。
+6. 修复失败或视觉/合规判断未收敛时，通过 graph 回环重试；超过上限后失败退出。
+7. 过程文件默认写入临时目录并删除，最终公开目录只保留验收产物。
+
+## 官方模板原位编辑
+
+第一阶段只准备并标记官方母模板，不拆页、不重建前置页：
+
+```powershell
+python scripts/prepare_official_template.py "D:\Work\研二下\Skill\格式要求\附件1-北航本科论文模板.doc" --out templates\official\buaa_undergraduate_template.docx --render-check-dir output\template_render_check
+python scripts/instrument_official_template.py --template templates\official\buaa_undergraduate_template.docx --out templates\official\buaa_undergraduate_template_instrumented.docx
+python scripts/extract_style_map.py --template templates\official\buaa_undergraduate_template.docx --out templates\official\style_map.json
+```
+
+`prepare_official_template.py` 优先使用 Word COM 转换 legacy `.doc`，并渲染 `output/template_render_check/page_001.png` 等检查图。`instrument_official_template.py` 只在官方 DOCX 内原位插入 placeholder/bookmark 语义标记，不复制页面、不拆 fragment、不改变 styles、numbering、header/footer、section、TOC field、page number fields、media、shapes 或 textboxes。
+
+每次生成论文时，主装配逻辑执行：
+
+```text
+copy templates/official/buaa_undergraduate_template_instrumented.docx -> output/thesis.docx
+replace cover/spine/task/declaration/abstract placeholders in place
+delete only the official sample body between {{BODY_START}} and {{BODY_END}}
+insert thesis model body blocks into the original body section
+update Word fields and export output/thesis.pdf
+```
+
+`scripts/extract_render_fragments.py` 只允许作为调试工具保留，不能参与主装配路径。最终 `output/template_inheritance_report.json` 必须证明 `thesis.docx` 是 instrumented 官方模板的副本，且 styles、numbering、headers、footers、TOC field 和 page number fields 没有被破坏。
 
 ## Graph 节点
 
@@ -44,13 +70,17 @@ output/
   thesis.pdf
   thesis.tex
   report.md
+  model.json
+  harness/
+  template_inheritance_report.json
+  template_diff/
   image/
 ```
 
 `thesis.docx` 是权威版面来源；`thesis.pdf` 从 `thesis.docx` 导出；`thesis.tex`
 是辅助结构化备份，用于复核和恢复，不作为主输出。
 
-PDF 输入的 `thesis.docx` 仍必须是可编辑 Word：封面、书脊、任务书和正文用模板文本渲染。
+PDF 输入的 `thesis.docx` 仍必须是可编辑 Word：封面、书脊、任务书和正文由官方模板原位替换得到。
 页面截图只可作为 OCR 或人工复核证据，不进入最终 Word 正文。
 
 ## 结构化抽取
@@ -129,7 +159,7 @@ DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片
 
 最终 `thesis.docx` 必须由统一 Word 模板生成固定前置结构：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。PDF 输入不得把源目录复制为正文；目录必须由 Word TOC 域生成，并在导出 PDF 前通过 Word COM 更新。正文渲染时必须过滤已进入前置结构的任务书、声明、摘要、目录和封面元数据，避免重复出现在正文里。
 
-前置页进入 render-first 流程：`buaa_thesis_kit/frontmatter_render/` 负责模板捕获、占位符替换、结构验证和渲染级对比，`buaa_thesis_kit/front_matter_renderer.py` 仍作为兼容入口。封面使用固定资源 `assets/buaa_seal.png`、`assets/buaa_wordmark.png`；中文题名会先拆成稳定两行，避免末尾单字换行。书脊使用 OOXML 竖排文本框 `w:textDirection="tbRl"`，不再输出横排“书脊”调试页。任务书必须使用 I/II/III/IV 参考版结构，声明页必须使用参考版“我声明，本论文及其研究工作……”文本，抽取不全的任务书只在 `report.md` 标记 `task_book_needs_review`。
+前置页必须由官方 instrumented 模板原位替换，不再由 `frontmatter_render` 或 `front_matter_renderer.py` 手写生成主输出。封面、书脊、任务书、声明、中文摘要、英文摘要和目录的几何结构、图片、文本框、页眉页脚、页码域和 section 均来自官方模板；代码只替换 placeholder 内容。任务书抽取不全时，缺失内容只在 `report.md` 标记，不得把“需人工复核”等说明写入 `thesis.docx`。
 
 中文摘要、英文摘要和目录使用独立 section：摘要/目录页脚为罗马页码，正文 section 从 `第 1 页` 重新编号。中文摘要页只包含中文题名、学生/指导老师、`摘    要`、中文摘要正文和 `关键词：`；英文题名、`Author:`、`Tutor:` 只能进入英文摘要页。
 
@@ -151,10 +181,13 @@ DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片
 
 ```powershell
 python -m pytest tests -q
+python scripts/run_harness.py --candidate tests\fixtures\bad_outputs\thesis6.docx --model-json tests\fixtures\expected_model_truncated.json --expected-model tests\fixtures\expected_model_truncated.json --sample-mode truncated --out output\harness
+python scripts/validate_output_text.py tests\fixtures\reference_good.docx --out output\harness\reference_good_output_text_report.json
 python scripts/run_pipeline.py "D:\Work\研二下\Skill\论文\崔润昊毕设打印版.docx" --out output
 python scripts/run_pipeline.py "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --out output
+python scripts/validate_template_inheritance.py --base templates\official\buaa_undergraduate_template_instrumented.docx --candidate output\thesis.docx --out output\template_inheritance_report.json --word-com-finalized
 python scripts/validate_front_matter.py "C:\Users\admin\Desktop\删减毕设.docx" output\thesis.docx --sample-mode truncated
-python scripts/validate_frontmatter_render.py --reference "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --candidate output\thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output\frontmatter_diff
+python scripts/validate_frontmatter_render.py --reference "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --candidate output\thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output\template_diff
 python scripts/validate_layout_consistency.py --reference "C:\Users\admin\Desktop\删减毕设.docx" --candidate output\thesis.docx --sample-mode truncated --out output\layout_consistency_report.json
 python scripts/capture_frontmatter_template.py "C:\path\to\reference.docx" --out templates\front_matter_captured
 ```

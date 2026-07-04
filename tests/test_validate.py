@@ -20,6 +20,8 @@ def _write_required_outputs(output_dir: Path) -> None:
     _write_valid_pdf(output_dir / "thesis.pdf")
     (output_dir / "thesis.tex").write_text("tex", encoding="utf-8")
     (output_dir / "report.md").write_text("report", encoding="utf-8")
+    (output_dir / "model.json").write_text("{}", encoding="utf-8")
+    (output_dir / "template_inheritance_report.json").write_text("{}", encoding="utf-8")
     (output_dir / "image").mkdir()
 
 
@@ -37,6 +39,21 @@ def test_validate_clean_output_allows_layout_consistency_report(tmp_path):
     output_dir = tmp_path / "output"
     _write_required_outputs(output_dir)
     (output_dir / "layout_consistency_report.json").write_text("{}", encoding="utf-8")
+
+    ok, messages = validate_clean_output(output_dir)
+
+    assert ok is True
+    assert messages == []
+
+
+def test_validate_clean_output_allows_harness_report_directory(tmp_path):
+    output_dir = tmp_path / "output"
+    _write_required_outputs(output_dir)
+    harness = output_dir / "harness"
+    harness.mkdir()
+    (harness / "status.json").write_text("{}", encoding="utf-8")
+    (harness / "model_validation_report.json").write_text("{}", encoding="utf-8")
+    (harness / "output_text_report.json").write_text("{}", encoding="utf-8")
 
     ok, messages = validate_clean_output(output_dir)
 
@@ -171,7 +188,14 @@ def test_build_report_marks_failed_for_blocking_items_or_failed_outputs():
 def test_build_report_marks_needs_review_for_manual_review_or_output_review():
     manual = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=["check equations"],
@@ -179,7 +203,14 @@ def test_build_report_marks_needs_review_for_manual_review_or_output_review():
     )
     output_review = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "needs_review", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "needs_review",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=[],
@@ -193,7 +224,14 @@ def test_build_report_marks_needs_review_for_manual_review_or_output_review():
 def test_build_report_marks_pass_when_no_failures_or_reviews():
     report = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=[],
@@ -203,7 +241,14 @@ def test_build_report_marks_pass_when_no_failures_or_reviews():
     assert report == {
         "status": "pass",
         "source": "source.docx",
-        "outputs": {"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        "outputs": {
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         "summary": {"items": 2},
         "blocking_items": [],
         "manual_review": [],

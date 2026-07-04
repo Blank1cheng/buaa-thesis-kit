@@ -348,19 +348,12 @@ def _cover_field_leaks(document) -> list[str]:
         if not text:
             continue
         compact = _compact_text(text)
-        exact_hits = [
-            marker
-            for marker in COVER_FIELD_LEAK_MARKERS
-            if compact == _compact_text(marker)
-        ]
         cluster_hits = [
             marker
             for marker in COVER_FIELD_LEAK_MARKERS
             if _compact_text(marker) in compact
         ]
-        if exact_hits:
-            leaks.extend(exact_hits)
-        elif len(cluster_hits) >= 2:
+        if len(cluster_hits) >= 2:
             leaks.extend(cluster_hits)
     return sorted(set(leaks))
 

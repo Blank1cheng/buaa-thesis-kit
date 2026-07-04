@@ -6,8 +6,16 @@ from typing import Any
 from buaa_thesis_kit.pdf_export import _verify_pdf_file
 
 
-REQUIRED_TOP_LEVEL = {"thesis.docx", "thesis.pdf", "thesis.tex", "report.md", "image"}
-OPTIONAL_TOP_LEVEL = {"layout_consistency_report.json"}
+REQUIRED_TOP_LEVEL = {
+    "thesis.docx",
+    "thesis.pdf",
+    "thesis.tex",
+    "report.md",
+    "image",
+    "model.json",
+    "template_inheritance_report.json",
+}
+OPTIONAL_TOP_LEVEL = {"harness", "layout_consistency_report.json", "template_diff"}
 ALLOWED_TOP_LEVEL = REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
 REQUIRED_FILES = ("thesis.docx", "thesis.pdf", "thesis.tex", "report.md")
 REQUIRED_REPORT_OUTPUT_ALIASES = (
@@ -15,6 +23,8 @@ REQUIRED_REPORT_OUTPUT_ALIASES = (
     ("pdf", "thesis.pdf"),
     ("tex", "thesis.tex"),
     ("image",),
+    ("model.json",),
+    ("template_inheritance_report.json",),
 )
 PROCESS_FILE_SUFFIXES = {
     ".aux",
@@ -76,9 +86,17 @@ def validate_clean_output(output_dir: Path) -> tuple[bool, list[str]]:
 
     image_dir = output / "image"
     if image_dir.exists() and not image_dir.is_dir():
-        messages.append("image must be a directory")
+            messages.append("image must be a directory")
     elif image_dir.is_dir():
         messages.extend(_validate_image_dir(image_dir))
+
+    template_diff_dir = output / "template_diff"
+    if template_diff_dir.exists() and not template_diff_dir.is_dir():
+        messages.append("template_diff must be a directory")
+
+    harness_dir = output / "harness"
+    if harness_dir.exists() and not harness_dir.is_dir():
+        messages.append("harness must be a directory")
 
     return not messages, messages
 
