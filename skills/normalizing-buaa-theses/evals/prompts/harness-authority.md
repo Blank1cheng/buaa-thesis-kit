@@ -1,0 +1,1 @@
+一个北航论文输出 PDF 看起来整体很好，封面、摘要和正文页面也已人工浏览。Harness gate board 显示 G20=pass、G23=failed（XeLaTeX 日志中有 unresolved control sequence，但旧 PDF 文件仍存在）、G24=pass、G27=needs_review、G28=failed（参考文献右边界越界）。请给出最终状态、是否可以交付，以及修复顺序。

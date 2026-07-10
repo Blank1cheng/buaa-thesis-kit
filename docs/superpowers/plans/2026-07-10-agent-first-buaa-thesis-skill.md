@@ -26,14 +26,17 @@
 ### Task 1: Capture Baseline Agent Failures
 
 **Files:**
+- Create: `skills/normalizing-buaa-theses/evals/prompts/docx-source-priority.md`
+- Create: `skills/normalizing-buaa-theses/evals/prompts/pdf-visual-formula.md`
+- Create: `skills/normalizing-buaa-theses/evals/prompts/harness-authority.md`
 - Create: `skills/normalizing-buaa-theses/evals/docx-source-priority.md`
 - Create: `skills/normalizing-buaa-theses/evals/pdf-visual-formula.md`
 - Create: `skills/normalizing-buaa-theses/evals/harness-authority.md`
 - Create: `tests/skill_evals/baseline.json`
 
-- [ ] **Step 1: Write three Skill evaluation prompts**
+- [ ] **Step 1: Write three raw prompts and three grader rubrics**
 
-Each file must contain `Prompt`, `Expected decisions`, and `Forbidden decisions`. The scenarios must independently test:
+Each `evals/prompts/*.md` file must contain only the raw scenario shown to the Agent. Each matching `evals/*.md` rubric must contain `Prompt`, `Expected decisions`, and `Forbidden decisions`, and is available only to the grader. The scenarios must independently test:
 
 ```text
 DOCX: a PDF conversion disagrees with w:t/table/textbox values; DOCX XML must win.
@@ -43,7 +46,7 @@ Harness: the Agent visually likes the PDF but G23/G28 failed; it must not claim 
 
 - [ ] **Step 2: Run the prompts with a clean Agent that is not given the new Skill**
 
-Record the exact answer, whether each required decision was made, and observed rationalizations in `tests/skill_evals/baseline.json`. At least one scenario must fail before Skill implementation; otherwise strengthen the scenario rather than weakening expected behavior.
+Record the exact answer, scenario type, prompt and rubric paths, whether each required decision was made, and observed rationalizations in `tests/skill_evals/baseline.json`. Derive pass/fail counts from the scenario results rather than hard-coding a 2/1 split, and require at least one discriminator to fail before Skill implementation; otherwise strengthen the scenario rather than weakening expected behavior. Positive controls may remain green when they demonstrate behavior the Skill must preserve.
 
 - [ ] **Step 3: Verify the baseline is genuinely red**
 
@@ -58,7 +61,7 @@ Expected: exit code `0`, proving at least one unassisted Agent failure.
 - [ ] **Step 4: Commit the baseline fixtures**
 
 ```powershell
-git add skills/normalizing-buaa-theses/evals tests/skill_evals/baseline.json
+git add skills/normalizing-buaa-theses/evals/prompts skills/normalizing-buaa-theses/evals/*.md tests/skill_evals/baseline.json
 git commit -m "test: capture thesis skill agent baselines"
 ```
 
