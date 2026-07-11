@@ -145,6 +145,97 @@ def test_output_contract_lists_required_artifacts(required_output: str) -> None:
     assert required_output in read_reference("output-contract.md")
 
 
+def test_visual_validation_defines_manifest_schema_and_page_evidence_rules() -> None:
+    reference = read_reference("visual-validation.md")
+    normalized = reference.casefold()
+
+    for token in (
+        "visual_review.json",
+        "pdf_sha256",
+        "pdf_page_count",
+        "region",
+        "pages",
+        "screenshot",
+        "bbox",
+        "status",
+        "checks",
+        "failure_ids",
+    ):
+        assert token in normalized
+    assert re.search(
+        r"(?:each|every)\s+page[^.\n]{0,120}(?:independent|separate)[^.\n]{0,80}screenshot"
+        r"|(?:independent|separate)\s+screenshot[^.\n]{0,120}(?:each|every)\s+page",
+        normalized,
+    ), "visual-validation.md must require an independent screenshot for every page"
+    assert re.search(
+        r"(?:all|every)\s+(?:pdf\s+)?pages?[^.\n]{0,100}(?:cover|coverage)"
+        r"|(?:full|complete)\s+(?:page|pdf page)\s+coverage",
+        normalized,
+    ), "visual-validation.md must require full PDF page coverage"
+    assert re.search(
+        r"non[- ]?pass[^.\n]{0,160}(?:active\s+)?failure_queue"
+        r"|(?:active\s+)?failure_queue[^.\n]{0,160}non[- ]?pass",
+        normalized,
+    ), "non-pass visual failure IDs must enter the active failure queue"
+
+
+def test_output_contract_defines_report_artifact_identity_digest() -> None:
+    reference = read_reference("output-contract.md")
+    normalized = reference.casefold()
+
+    for token in (
+        "artifact identity",
+        "source_candidate_path",
+        "source_sha256",
+        "source_size",
+        "artifact_manifest_sha256",
+    ):
+        assert token in normalized
+    assert re.search(
+        r"(?:exclude|excluding|excluded|omit|omits)\s+`?report\.md`?"
+        r"[^.\n]{0,160}(?:cycle|circular)"
+        r"|(?:cycle|circular)[^.\n]{0,160}(?:exclude|excluding|excluded|omit|omits)"
+        r"[^.\n]{0,80}`?report\.md`?",
+        normalized,
+    ), "artifact manifest digest must exclude report.md to avoid a digest cycle"
+
+
+def test_failure_taxonomy_defines_semantic_ids_and_resolved_history() -> None:
+    reference = read_reference("failure-taxonomy.md")
+    normalized = reference.casefold()
+
+    for token in ("semantic key", "h-g28-cover-review", "resolved history"):
+        assert token in normalized
+    assert re.search(
+        r"(?:h-id|failure id|id)[^.\n]{0,160}(?:not|never|must not)"
+        r"[^.\n]{0,100}(?:evidence|appearance order|occurrence order)"
+        r"|(?:evidence|appearance order|occurrence order)[^.\n]{0,120}"
+        r"(?:does not|must not|never)[^.\n]{0,100}(?:determine|define|change)[^.\n]{0,60}(?:h-id|failure id|id)",
+        normalized,
+    ), "H-ID must not be derived from evidence or failure appearance order"
+
+
+def test_failure_taxonomy_uses_sha256_and_forbids_sequence_allocated_ids() -> None:
+    reference = read_reference("failure-taxonomy.md")
+    normalized = reference.casefold()
+
+    assert re.search(
+        r"evidence\.sha256|(?:^|\s)sha256(?:\s|:|`)",
+        normalized,
+        re.MULTILINE,
+    ), "failure evidence schema must name sha256"
+    assert "h-<gate>-<序号>" not in normalized
+    assert not re.search(
+        r"(?:appearance|occurrence)\s+(?:order|sequence)[^.\n]{0,100}"
+        r"(?:assign|allocate|allocation)"
+        r"|(?:assign|allocate)[^.\n]{0,100}(?:appearance|occurrence)\s+"
+        r"(?:order|sequence)",
+        normalized,
+    ), "H-IDs must not be allocated by failure appearance order"
+    assert "semantic key" in normalized
+    assert "h-g28-cover-review" in normalized
+
+
 def test_unknown_degree_must_not_be_guessed() -> None:
     skill = read_skill()
 

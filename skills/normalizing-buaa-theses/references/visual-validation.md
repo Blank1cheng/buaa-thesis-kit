@@ -21,3 +21,12 @@
 
 发现问题时保存整页截图和最小区域裁剪；复修后以同一页和区域生成新证据，不覆盖失败证据。
 
+## Visual review manifest
+
+Write the audit manifest to `output/image/visual_review.json`. It contains
+`pdf_sha256`, `pdf_page_count`, and a `reviews` list. Every review contains
+`region`, `pages`, `screenshot`, `bbox`, `status`, `checks`, and `failure_ids`.
+
+Each page has one independent, real raster screenshot. A review binds exactly
+one PDF page, and its `bbox` must remain inside that page. Complete page coverage
+is required: the review page union must cover every PDF page. Every non-pass failure_ids entry must exist in the active failure_queue.json.
