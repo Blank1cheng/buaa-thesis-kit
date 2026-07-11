@@ -31,6 +31,17 @@ can_fix_now: true-or-false
 
 `evidence` 与 `evidence_text` 必须同时存在，不能二选一。结构化 `evidence` 明确包含 `paths`、`page`、`bbox` 和 `sha256`：用 `paths` 定位源文件、截图或裁剪，用 `page` 和 `bbox` 锁定区域，并用 `sha256` 绑定证据版本；`evidence_text` 提供简短事实摘要，不替代结构化定位。
 
+Agent 报告已经观察到的问题时，must always write a concrete H-ID。不能只写“建立稳定 H-ID”“每项使用 H-ID”或留到以后分配；回答和 `failure_queue.json` 必须直接列出实际 ID。semantic key 由 gate 和问题语义决定，位置只在确有必要区分两个同类问题时加入。例如：
+
+- 公式 (2-3) 的 `1`/`l` 歧义：`H-G26-EQUATION-2-3-SYMBOL-AMBIGUITY`。
+- XeLaTeX 未解析控制序列：`H-G23-XELATEX-UNRESOLVED-CONTROL-SEQUENCE`。
+- 逐页视觉复核尚未闭环：`H-G27-VISUAL-REVIEW-OPEN`。
+- 参考文献右边界越界：`H-G28-REFERENCES-RIGHT-OVERFLOW`。
+
+这些是命名规则示例，不是固定问题清单；Agent 应对实际观察到的每个未闭环问题立即生成同类具体 ID，并在后续轮次沿用同一 ID。
+
+当输入或回答涉及 gate board 时，Agent 必须把其中每个 `failed` 或 `needs_review` gate 明确写成 active `failure_queue` 记录；不能只列修复顺序。即使使用精简文本，也至少逐项给出 `id`、`gate`、`status`、`evidence` 和 `suggested_fix`，并说明该队列决定总体状态。
+
 active `failure_queue.json` 只包含状态为 `failed` 或 `needs_review` 的未闭环项。每轮只处理一个 H-ID；修复后追加新证据并重跑其 gate，将同一 ID 标为 `resolved`，再把完整记录迁移或记录到 `report.md` 的 resolved history，并从 active queue 移除。已分配的 ID 永不复用。关闭所有问题后仍须重跑全部 required gates，Harness 才能重新裁决总体状态。
 
 ## Semantic H-ID

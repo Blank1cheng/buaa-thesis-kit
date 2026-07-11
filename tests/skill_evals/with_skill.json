@@ -1,0 +1,59 @@
+{
+  "status": "green",
+  "protocol": {
+    "agent_input": "Agent receives only the raw scenario and the normalizing-buaa-theses Skill.",
+    "grader_input": "rubric_file is read only after answer capture and is never shown to the Agent.",
+    "answer_capture": "answer preserves the final isolated Agent response verbatim without normalization, summarization, deletion, or appended text."
+  },
+  "passed_count": 3,
+  "failed_count": 0,
+  "scenarios": [
+    {
+      "id": "docx-source-priority",
+      "scenario_type": "positive_control",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/docx-source-priority.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/docx-source-priority.md",
+      "answer": "采用的元数据为：\n\n- 学院：`自动化科学与电气工程学院`\n- 专业：`自动化`\n- 导师：`唐荻音`\n\n以上值来自 DOCX 原始 OOXML 中的表格或文本框。原始 DOCX 的 `w:t`、表格、文本框、OMML、OLE 及 relationship 证据优先于由 DOCX 派生的 PDF 文本。PDF 截图只能验证版面和字形是否完整，不能证明字段语义；因此不能用截图支持“自动化学院”或把“2021年5月”认定为导师。\n\n具体操作顺序如下：\n\n1. 记录 DOCX、PDF 的绝对路径、字节数和 SHA-256，所有字段证据绑定对应源文件的 SHA。\n2. 直接解包 DOCX，解析 document、header、footer、footnotes、endnotes 及关系文件；按段落顺序提取表格和 `w:txbxContent` 文本框中的 `w:t`，同时记录部件路径、段落位置及可见版本状态。\n3. 从 DOCX 建立字段证据记录，将上述学院、专业和导师值写入模型，并保存 `source_path`、`source_sha256`、`part`、`paragraph`、`method: docx_xml`、置信度和复核状态。\n4. 从 PDF 提取字符、页码和 bbox，重建阅读顺序，再渲染对应区域进行视觉核验。\n5. 将 PDF 得到的“自动化学院”和“2021年5月”作为冲突候选保存，不覆盖 DOCX 值。学院和导师字段标记为 `needs_review`；专业“自动化”没有给出冲突，可在 DOCX 证据完整且属于当前可见版本时标记为 `pass`。\n6. 使用封面其他位置、任务书等独立结构化证据，或由用户人工确认学院和导师。复核结果仍须写回证据模型，不得仅凭语义合理性消除冲突。\n\n在学院和导师冲突尚未闭环时，可以生成标明非最终状态的试渲染，但不能生成或宣称最终 PDF 已通过。只有本科层次已确认、三个字段均有可追溯证据且 `review: pass` 后，才可将这些值填入 BUAAthesis 本科模式提供的元数据接口，调用模板前置页并使用 XeLaTeX 全新编译。最终收口还要求逐页视觉检查全部完成，且 Harness 的所有 required gates 均为 `pass`。",
+      "checks": [
+        {"id": "uses-raw-docx-structure", "passed": true, "observation": "DOCX 原始 OOXML 与字段结构明确优先于 PDF 文本抽取。"},
+        {"id": "selects-correct-metadata", "passed": true, "observation": "采用正确学院、专业和导师，并拒绝把日期当导师。"},
+        {"id": "gates-final-render", "passed": true, "observation": "冲突闭环、逐页复核和 required gates 全部通过前不生成最终通过稿。"}
+      ],
+      "passed": true,
+      "observed_rationalizations": []
+    },
+    {
+      "id": "pdf-visual-formula",
+      "scenario_type": "discriminator",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/pdf-visual-formula.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/pdf-visual-formula.md",
+      "answer": "不能将 `h_1(x)=PSF(x)` 写入最终 `thesis.tex`。视觉模型的 0.96 置信度不能消除 `l`/`1` 歧义；XeLaTeX 编译成功只证明语法成立，长宽比接近也不能证明字符正确。\n\n应保留：\n\n- 原 PDF 的绝对路径、SHA-256、页码 17、公式 `(2-3)` 的实测 bbox。\n- 包含公式编号和上下文的整页截图及高分辨率裁剪。\n- PDF 文本层、字符编码、字体及字符 bbox。\n- 两个候选 `h_1(x)=PSF(x)`、`h_l(x)=PSF(x)`，以及视觉模型的方法和置信度。\n- 正文中对该符号的定义、邻近公式及后续引用。\n- 可消歧的独立证据，例如明确的 PDF 文本层、作者源文件或作者/用户确认。OCR只能增加候选，不能单独闭环。\n\n公式记录状态为 `review: needs_review`，总体状态至少为 `needs_review`，不得称为最终交付或 `pass`。建立活动问题：\n\n`H-G26-EQUATION-2-3-SYMBOL-AMBIGUITY`\n\n该记录应绑定源 PDF SHA、page 17、公式区域 bbox 和裁剪路径，原因写明“公式 `(2-3)` 中下标无法区分字母 `l` 与数字 `1`”，建议修复为“取得独立字符证据或人工确认”。\n\n下一步只处理该 H-ID：获取独立证据并逐符号核对。确认字符后，沿用同一公式 ID 和 H-ID，将确认后的原生 LaTeX 写入 `thesis.tex`，执行最小公式编译和全文全新 XeLaTeX 编译，重新渲染第 17 页并与原裁剪逐符号比较；随后将该 H-ID 记为 `resolved`，重跑相关 gate 及全部 required gates。若仍无法消歧，则继续保持 `needs_review`，不得写入猜测值。",
+      "checks": [
+        {"id": "does-not-write-ambiguous-final-equation", "passed": true, "observation": "明确拒绝将未消歧候选写入最终 thesis.tex。"},
+        {"id": "uses-needs-review-status", "passed": true, "observation": "使用规范状态 needs_review。"},
+        {"id": "assigns-stable-h-id", "passed": true, "observation": "实际分配 H-G26-EQUATION-2-3-SYMBOL-AMBIGUITY。"},
+        {"id": "keeps-ambiguity-out-of-working-tex", "passed": true, "observation": "候选留在结构化证据中，不建议以 TODO 写进 thesis.tex。"},
+        {"id": "requests-disambiguating-evidence", "passed": true, "observation": "要求文本层、字符编码、上下文和独立来源消歧。"}
+      ],
+      "passed": true,
+      "observed_rationalizations": []
+    },
+    {
+      "id": "harness-authority",
+      "scenario_type": "discriminator",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/harness-authority.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/harness-authority.md",
+      "answer": "最终状态：`failed`。不可交付。G20、G24 的 `pass`、旧 PDF 和人工观感均不能覆盖 required gate 的失败或待复核状态。\n\n当前 active `failure_queue`：\n\n```yaml\n- id: H-G23-XELATEX-UNRESOLVED-CONTROL-SEQUENCE\n  gate: G23\n  status: failed\n  evidence:\n    paths: [XeLaTeX日志]\n    page: null\n    bbox: null\n    sha256: null\n  evidence_text: XeLaTeX存在未解析控制序列，旧PDF不能作为成功构建证据。\n  suggested_fix: 修正该控制序列，清理辅助文件后从当前thesis.tex全新完整编译。\n\n- id: H-G28-REFERENCES-RIGHT-OVERFLOW\n  gate: G28\n  status: failed\n  evidence:\n    paths: [参考文献页面截图或裁剪]\n    page: null\n    bbox: null\n    sha256: null\n  evidence_text: 参考文献内容超出右边界。\n  suggested_fix: 修正对应参考文献条目的断行或排版宽度，并保持BUAAthesis模板页边距不变。\n\n- id: H-G27-VISUAL-REVIEW-OPEN\n  gate: G27\n  status: needs_review\n  evidence:\n    paths: [gate-board]\n    page: null\n    bbox: null\n    sha256: null\n  evidence_text: 当前PDF的逐页视觉复核证据尚未闭环。\n  suggested_fix: 对最终重编译PDF逐页生成独立截图并完成visual_review.json，绑定PDF SHA、页码、bbox和检查结果。\n```\n\n修复顺序：\n\n1. 先处理 `H-G23-XELATEX-UNRESOLVED-CONTROL-SEQUENCE`，全新编译并确认产生的是当前源码对应的新 PDF；重跑 G23，再重跑全部 required gates。\n2. 若仍存在，处理 `H-G28-REFERENCES-RIGHT-OVERFLOW`，重新编译并复核参考文献区域；重跑 G28，再重跑全部 required gates。\n3. 最后基于最终 PDF 关闭 `H-G27-VISUAL-REVIEW-OPEN`，完成全页覆盖的视觉证据；重跑 G27，再重跑全部 required gates。\n\n只有所有 Agent visual review items 均闭环，且 G20、G23、G24、G27、G28 等全部 required gates 均为 `pass`，Harness 才可将最终状态改为 `pass` 并允许交付。",
+      "checks": [
+        {"id": "harness-is-authoritative", "passed": true, "observation": "最终状态为 failed，视觉观感不能覆盖 gate。"},
+        {"id": "rejects-stale-pdf", "passed": true, "observation": "旧 PDF 被明确拒绝作为当前成功构建证据。"},
+        {"id": "orders-remediation", "passed": true, "observation": "按 G23、G28、G27 顺序逐项修复并全量重跑。"},
+        {"id": "blocks-delivery-until-pass", "passed": true, "observation": "全部 required gates 通过前不可交付。"},
+        {"id": "canonical-structured-status", "passed": true, "observation": "使用规范小写 failed。"},
+        {"id": "stable-failure-ids", "passed": true, "observation": "三个 gate 均有具体稳定 H-ID 和 active failure_queue 记录。"}
+      ],
+      "passed": true,
+      "observed_rationalizations": []
+    }
+  ]
+}

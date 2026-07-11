@@ -236,6 +236,50 @@ def test_failure_taxonomy_uses_sha256_and_forbids_sequence_allocated_ids() -> No
     assert "h-g28-cover-review" in normalized
 
 
+def test_failure_taxonomy_requires_concrete_ids_in_agent_reports() -> None:
+    reference = read_reference("failure-taxonomy.md")
+    normalized = reference.casefold()
+
+    assert re.search(
+        r"(?:must|always)[^.\n]{0,120}(?:concrete|explicit|actual)\s+h-id"
+        r"|(?:concrete|explicit|actual)\s+h-id[^.\n]{0,120}(?:must|always)",
+        normalized,
+    ), "Agent reports must instantiate concrete H-IDs instead of promising one later"
+    for expected_id in (
+        "h-g23-xelatex-unresolved-control-sequence",
+        "h-g27-visual-review-open",
+        "h-g28-references-right-overflow",
+        "h-g26-equation-2-3-symbol-ambiguity",
+    ):
+        assert expected_id in normalized
+
+
+def test_failure_taxonomy_requires_queue_records_for_observed_gates() -> None:
+    reference = read_reference("failure-taxonomy.md")
+    normalized = reference.casefold()
+
+    assert re.search(
+        r"gate[- ]board[^.\n]{0,220}failure_queue"
+        r"|failure_queue[^.\n]{0,220}gate[- ]board",
+        normalized,
+    )
+    for field in ("id", "gate", "status", "evidence", "suggested_fix"):
+        assert field in normalized
+
+
+def test_equation_review_bundle_is_not_final_delivery() -> None:
+    reference = read_reference("equation-handling.md")
+    normalized = reference.casefold()
+
+    assert re.search(
+        r"needs_review[^.\n]{0,220}(?:must not|never|不得)[^.\n]{0,120}"
+        r"(?:final delivery|最终交付|正式交付)"
+        r"|(?:final delivery|最终交付|正式交付)[^.\n]{0,220}"
+        r"(?:must not|never|不得)[^.\n]{0,120}needs_review",
+        normalized,
+    )
+
+
 def test_unknown_degree_must_not_be_guessed() -> None:
     skill = read_skill()
 
