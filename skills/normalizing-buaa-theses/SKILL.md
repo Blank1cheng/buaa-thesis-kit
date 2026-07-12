@@ -20,4 +20,4 @@ Agent 是执行者：提取、建模、渲染、逐页检查和修复。Harness 
 7. Agent visual 对生成 PDF 逐页检查，并按[视觉验证清单](references/visual-validation.md)保存截图证据。
 8. 交给 Harness 运行全部 required gates；按[失败分类](references/failure-taxonomy.md)写入稳定 H-ID。
 9. 从最高优先级问题开始，遵守 one failure at a time：每轮只修一个 H-ID，重新编译、视觉复核并重跑相关 gate，随后重跑全部 required gates。
-10. 按[输出契约](references/output-contract.md)交付；只有 Agent visual review items 全部闭环且所有 required Harness gates 均为 `pass` 才可收口为 `pass`。保留审计证据，执行 cleanup generated artifacts，清除过期与临时产物。
+10. 按[输出契约](references/output-contract.md)将已复核 run 打包为平面 `output/`，从交付 `thesis.tex` 全新编译并比较页数与逐页像素，再分别运行 LaTeX/PDF 和 Agent visual delivery profiles。只有 Agent visual review items 全部闭环、两个交付 profile 和所有 required Harness gates 均为 `pass` 才可收口。保留公开审计证据，执行 cleanup generated artifacts，清除过期与临时产物。

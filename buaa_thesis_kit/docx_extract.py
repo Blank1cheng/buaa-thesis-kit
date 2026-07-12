@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from docx import Document
 from docx.table import Table
@@ -20,6 +20,10 @@ from buaa_thesis_kit.models import (
     SourceEvidence,
     ThesisModel,
 )
+from buaa_thesis_kit.extract.equation_extract import extract_mathtype_native_stream
+from buaa_thesis_kit.extract.task_book_extract import extract_task_book_from_blocks
+from buaa_thesis_kit.extract.reference_extract import merge_reference_entries, numbered_reference
+from buaa_thesis_kit.extract.metadata_extract import resolve_metadata_from_texts
 
 
 SOURCE_DOCX_NAME = "source.docx"
@@ -59,6 +63,9 @@ COVER_TITLE_STOP_LABELS = {
 }
 RELATIONSHIP_ID_ATTR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 RELATIONSHIP_EMBED_ATTR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W_VAL_ATTR = f"{{{WORD_NS}}}val"
+W_STYLE_ID_ATTR = f"{{{WORD_NS}}}styleId"
 DOCX_FIGURE_CAPTION_RE = re.compile(
     r"^\s*(?:图\s*\d+(?:[.\-]\d+)*|fig(?:ure)?\.?\s*\d+(?:[.\-]\d+)*)\s+.+",
     flags=re.IGNORECASE,
@@ -74,6 +81,7 @@ class TextBlock:
     table_index: int | None = None
     row_index: int | None = None
     cell_index: int | None = None
+    xml_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -157,15 +165,22 @@ def extract_thesis_model(docx_path: Path, work_dir: Path) -> ThesisModel:
         return model
 
     try:
-        document = Document(str(source_copy))
+        Document(str(source_copy))
     except Exception as exc:  # python-docx raises several XML/ZIP errors.
         model.extraction_warnings.append(f"unreadable DOCX: {exc}")
         model.status = "failed"
         return model
 
-    text_blocks, model.tables = _read_text_blocks_and_tables(document)
     model.figures, media_warnings = _extract_media(source_copy, work_dir)
     model.equations = _extract_equations(source_copy, work_dir)
+    equation_markers = _equation_markers_by_paragraph(model.equations)
+
+    try:
+        text_blocks, model.tables = _read_text_blocks_and_tables(source_copy, equation_markers)
+    except (zipfile.BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
+        model.extraction_warnings.append(f"unreadable DOCX XML: {exc}")
+        model.status = "failed"
+        return model
 
     if not text_blocks:
         model.extraction_warnings.append("no body content found")
@@ -173,7 +188,9 @@ def extract_thesis_model(docx_path: Path, work_dir: Path) -> ThesisModel:
         return model
 
     model.metadata, metadata_warnings = _extract_metadata(text_blocks)
-    front_matter, sections, references, appendices = _split_content(text_blocks)
+    model.task_book = extract_task_book_from_blocks(text_blocks, model.metadata.to_dict())
+    content_blocks = _text_blocks_with_equation_markers(text_blocks, model.equations)
+    front_matter, sections, references, appendices = _split_content(content_blocks)
     model.front_matter = front_matter
     model.sections = sections
     model.references = references
@@ -189,33 +206,63 @@ def extract_thesis_model(docx_path: Path, work_dir: Path) -> ThesisModel:
     return model
 
 
-def _read_text_blocks_and_tables(document) -> tuple[list[TextBlock], list[ContentBlock]]:
+def _read_text_blocks_and_tables(
+    source_copy: Path,
+    equation_markers_by_paragraph: dict[int, list[str]] | None = None,
+) -> tuple[list[TextBlock], list[ContentBlock]]:
     blocks: list[TextBlock] = []
     tables: list[ContentBlock] = []
     block_index = 0
     table_index = 0
+    paragraph_index = 0
 
-    for item in _iter_body_items(document):
-        if isinstance(item, Paragraph):
-            text = _clean_text(item.text)
+    with zipfile.ZipFile(source_copy) as docx_zip:
+        document_xml = docx_zip.read("word/document.xml")
+        root = etree.fromstring(document_xml)
+        style_names = _docx_style_names(docx_zip)
+
+    body_items = root.xpath("//*[local-name()='body']/*")
+    for item_index, item in enumerate(body_items):
+        local_name = etree.QName(item).localname
+        if local_name == "p":
+            markers = (equation_markers_by_paragraph or {}).get(paragraph_index, [])
+            text = _xml_node_text(item, include_textboxes=False, equation_markers=markers)
             if text:
                 blocks.append(
                     TextBlock(
                         index=block_index,
                         kind="paragraph",
                         text=text,
-                        style_name=item.style.name if item.style else "",
+                        style_name=_xml_paragraph_style_name(item, style_names),
+                        xml_path=f"word/document.xml/body/p[{paragraph_index}]",
                     )
                 )
                 block_index += 1
-        elif isinstance(item, Table):
+            for textbox_index, textbox in enumerate(_xml_textbox_nodes(item)):
+                for textbox_text_index, text in enumerate(_xml_textbox_texts(textbox)):
+                    blocks.append(
+                        TextBlock(
+                            index=block_index,
+                            kind="textbox",
+                            text=text,
+                            xml_path=(
+                                f"word/document.xml/body/p[{paragraph_index}]/"
+                                f"txbxContent[{textbox_index}]/p[{textbox_text_index}]"
+                            ),
+                        )
+                    )
+                    block_index += 1
+            paragraph_index += 1
+        elif local_name == "tbl":
             table_index += 1
             rows: list[list[str]] = []
             first_block_index = block_index
-            for row_idx, row in enumerate(item.rows):
+            row_nodes = item.xpath("./*[local-name()='tr']")
+            for row_idx, row in enumerate(row_nodes):
                 row_values: list[str] = []
-                for cell_idx, cell in enumerate(row.cells):
-                    text = _clean_text(cell.text)
+                cell_nodes = row.xpath("./*[local-name()='tc']")
+                for cell_idx, cell in enumerate(cell_nodes):
+                    text = _xml_node_text(cell, include_textboxes=False)
                     row_values.append(text)
                     if text:
                         blocks.append(
@@ -226,9 +273,31 @@ def _read_text_blocks_and_tables(document) -> tuple[list[TextBlock], list[Conten
                                 table_index=table_index,
                                 row_index=row_idx,
                                 cell_index=cell_idx,
+                                xml_path=(
+                                    f"word/document.xml/body/tbl[{table_index}]/"
+                                    f"tr[{row_idx}]/tc[{cell_idx}]"
+                                ),
                             )
                         )
                         block_index += 1
+                    for textbox_index, textbox in enumerate(_xml_textbox_nodes(cell)):
+                        for textbox_text_index, text in enumerate(_xml_textbox_texts(textbox)):
+                            blocks.append(
+                                TextBlock(
+                                    index=block_index,
+                                    kind="textbox",
+                                    text=text,
+                                    table_index=table_index,
+                                    row_index=row_idx,
+                                    cell_index=cell_idx,
+                                    xml_path=(
+                                        f"word/document.xml/body/tbl[{table_index}]/"
+                                        f"tr[{row_idx}]/tc[{cell_idx}]/"
+                                        f"txbxContent[{textbox_index}]/p[{textbox_text_index}]"
+                                    ),
+                                )
+                            )
+                            block_index += 1
                 rows.append(row_values)
             table_text = "\n".join("\t".join(cell for cell in row if cell) for row in rows).strip()
             if table_text:
@@ -241,6 +310,128 @@ def _read_text_blocks_and_tables(document) -> tuple[list[TextBlock], list[Conten
                     )
                 )
     return blocks, tables
+
+
+def _text_blocks_with_equation_markers(blocks: list[TextBlock], equations: list[EquationItem]) -> list[TextBlock]:
+    existing_markers = "\n".join(block.text for block in blocks)
+    markers: list[tuple[int, TextBlock]] = []
+    next_index = max((block.index for block in blocks), default=-1) + 1
+    for equation in equations:
+        marker_text = f"__BUAA_EQUATION_{equation.id}__"
+        if marker_text in existing_markers:
+            continue
+        paragraph_index = equation.source.paragraph_index if equation.source else None
+        if paragraph_index is None:
+            continue
+        markers.append(
+            (
+                paragraph_index,
+                TextBlock(
+                    index=next_index,
+                    kind="equation",
+                    text=marker_text,
+                    xml_path=f"word/document.xml/body/p[{paragraph_index}]",
+                ),
+            )
+        )
+        next_index += 1
+    if not markers:
+        return blocks
+    items: list[tuple[int, int, TextBlock]] = []
+    for block in blocks:
+        body_index = _body_item_index_from_xml_path(block.xml_path)
+        if body_index is None:
+            body_index = 10**9 + block.index
+        items.append((body_index, 0, block))
+    for body_index, marker in markers:
+        items.append((body_index, 1, marker))
+    return [block for _body_index, _kind_order, block in sorted(items, key=lambda item: (item[0], item[1], item[2].index))]
+
+
+def _body_item_index_from_xml_path(xml_path: str) -> int | None:
+    match = re.search(r"body/(?:p|tbl)\[(\d+)\]", str(xml_path or ""))
+    return int(match.group(1)) if match else None
+
+
+def _equation_markers_by_paragraph(equations: list[EquationItem]) -> dict[int, list[str]]:
+    markers: dict[int, list[str]] = {}
+    for equation in equations:
+        paragraph_index = equation.source.paragraph_index if equation.source else None
+        if paragraph_index is None:
+            continue
+        markers.setdefault(paragraph_index, []).append(f"__BUAA_EQUATION_{equation.id}__")
+    return markers
+
+
+def _docx_style_names(docx_zip: zipfile.ZipFile) -> dict[str, str]:
+    if "word/styles.xml" not in docx_zip.namelist():
+        return {}
+    try:
+        root = etree.fromstring(docx_zip.read("word/styles.xml"))
+    except etree.XMLSyntaxError:
+        return {}
+    style_names: dict[str, str] = {}
+    for style in root.xpath("//*[local-name()='style']"):
+        style_id = style.get(W_STYLE_ID_ATTR)
+        if not style_id:
+            continue
+        name_nodes = style.xpath("./*[local-name()='name']")
+        style_names[style_id] = name_nodes[0].get(W_VAL_ATTR) if name_nodes else style_id
+    return style_names
+
+
+def _xml_paragraph_style_name(paragraph, style_names: dict[str, str]) -> str:
+    style_nodes = paragraph.xpath("./*[local-name()='pPr']/*[local-name()='pStyle']")
+    if not style_nodes:
+        return ""
+    style_id = style_nodes[0].get(W_VAL_ATTR) or ""
+    return style_names.get(style_id, style_id)
+
+
+def _xml_textbox_nodes(node) -> list:
+    return list(node.xpath(".//*[local-name()='txbxContent']"))
+
+
+def _xml_textbox_texts(textbox) -> list[str]:
+    paragraphs = textbox.xpath("./*[local-name()='p']")
+    values = [_xml_node_text(paragraph) for paragraph in paragraphs]
+    values = [value for value in values if value]
+    if values:
+        return values
+    value = _xml_node_text(textbox)
+    return [value] if value else []
+
+
+def _xml_node_text(
+    node,
+    *,
+    include_textboxes: bool = True,
+    equation_markers: list[str] | None = None,
+) -> str:
+    texts: list[str] = []
+    marker_index = 0
+    for child in node.iter():
+        local_name = etree.QName(child).localname
+        if local_name == "t":
+            if not include_textboxes and _has_ancestor_named(child, "txbxContent"):
+                continue
+            texts.append(child.text or "")
+        elif local_name == "OLEObject" and equation_markers:
+            if not include_textboxes and _has_ancestor_named(child, "txbxContent"):
+                continue
+            if marker_index < len(equation_markers):
+                texts.append(f" {equation_markers[marker_index]} ")
+                marker_index += 1
+    return _clean_text("".join(texts))
+
+
+def _has_ancestor_named(node, local_name: str) -> bool:
+    parent = node.getparent()
+    while parent is not None:
+        if etree.QName(parent).localname == local_name:
+            return True
+        parent = parent.getparent()
+    return False
 
 
 def _iter_body_items(document) -> Iterable[Paragraph | Table]:
@@ -277,11 +468,15 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
                 conflict_reported = True
         if chosen_value and chosen_unit is not None:
             setattr(metadata, field, chosen_value)
+            source_block = chosen_unit.block
             metadata.evidence[field] = _source(
                 chosen_unit.method,
-                chosen_unit.block.index if chosen_unit.block else None,
+                source_block.index if source_block else None,
                 chosen_unit.confidence,
                 False,
+                source_region=_metadata_region(source_block.index) if source_block else "",
+                evidence_text=chosen_unit.text,
+                extractor_rule=chosen_unit.method,
             )
 
     if not metadata.title_cn:
@@ -293,6 +488,9 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
                 block.index,
                 0.66,
                 True,
+                source_region=_metadata_region(block.index),
+                evidence_text=block.text,
+                extractor_rule="metadata-cover-title-anchor",
             )
 
     if not metadata.title_cn:
@@ -304,6 +502,9 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
                 block.index,
                 0.45,
                 True,
+                source_region=_metadata_region(block.index),
+                evidence_text=block.text,
+                extractor_rule="metadata-title-heuristic",
             )
 
     if not metadata.date:
@@ -315,13 +516,147 @@ def _extract_metadata(blocks: list[TextBlock]) -> tuple[Metadata, list[str]]:
                 block.index,
                 0.58,
                 True,
+                source_region=_metadata_region(block.index),
+                evidence_text=block.text,
+                extractor_rule="metadata-cover-date-heuristic",
             )
 
     if "unit_code" not in metadata.evidence:
         metadata.unit_code = "10006"
         metadata.evidence["unit_code"] = _source("metadata-default", None, 0.6, False)
 
+    enhanced_report = resolve_metadata_from_texts(
+        [
+            {
+                "text": block.text,
+                "paragraph_index": block.index,
+                "block_index": block.index,
+                "source_region": _metadata_region(block.index),
+                "method": _metadata_method(block),
+                "evidence_text": block.text,
+            }
+            for block in blocks[:100]
+        ],
+        source_file=SOURCE_DOCX_NAME,
+        source_type="docx",
+    )
+    for field, item in (enhanced_report.get("resolved") or {}).items():
+        current_value = getattr(metadata, field, "")
+        current_evidence = metadata.evidence.get(field)
+        current_confidence = current_evidence.confidence if current_evidence else 0.0
+        if current_value and current_confidence >= float(item.get("confidence") or 0.0):
+            continue
+        value = str(item.get("value") or "")
+        if field == "date":
+            value = re.sub(r"\s+", "", value)
+        setattr(metadata, field, value)
+        method = str(item.get("method") or f"metadata-{item.get('rule') or 'enhanced'}")
+        rule = str(item.get("rule") or "enhanced")
+        if not method.startswith("metadata-"):
+            method = f"metadata-{method}"
+        if rule and rule not in method:
+            method = f"{method}-{rule}"
+        metadata.evidence[field] = SourceEvidence(
+            file=str(item.get("source_file") or SOURCE_DOCX_NAME),
+            method=method,
+            paragraph_index=item.get("paragraph_index"),
+            page_hint=item.get("source_page"),
+            confidence=float(item.get("confidence") or 0.0),
+            requires_review=float(item.get("confidence") or 0.0) < 0.85,
+            source_type=str(item.get("source_type") or "docx"),
+            source_region=str(item.get("source_region") or ""),
+            evidence_text=str(item.get("evidence") or item.get("evidence_text") or ""),
+            extractor_rule=rule,
+        )
+    for conflict in enhanced_report.get("conflicts") or []:
+        field = conflict.get("field", "")
+        if field:
+            warnings.append(f"conflicting metadata field: {field}")
+    metadata.candidates = _metadata_candidate_groups(enhanced_report.get("candidates") or [])
+    metadata.conflicts = list(enhanced_report.get("conflicts") or [])
+    metadata.resolution = _metadata_resolution_report(metadata)
+
     return metadata, warnings
+
+
+def _metadata_candidate_groups(candidates: list[dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for candidate in candidates:
+        field = str(candidate.get("field") or "")
+        if not field:
+            continue
+        grouped.setdefault(field, []).append(dict(candidate))
+    for field_candidates in grouped.values():
+        field_candidates.sort(
+            key=lambda item: (
+                float(item.get("confidence") or 0.0),
+                -int(item.get("paragraph_index") or 0),
+            ),
+            reverse=True,
+        )
+    return grouped
+
+
+def _metadata_resolution_report(metadata: Metadata) -> dict[str, dict]:
+    report: dict[str, dict] = {}
+    for field in FIELD_LABELS:
+        value = getattr(metadata, field, "")
+        evidence = metadata.evidence.get(field)
+        if not value or evidence is None:
+            continue
+        matching_candidates = [
+            candidate
+            for candidate in metadata.candidates.get(field, [])
+            if _metadata_value_key(candidate.get("value", "")) == _metadata_value_key(value)
+        ]
+        conflicts = [
+            conflict for conflict in metadata.conflicts if str(conflict.get("field") or "") == field
+        ]
+        report[field] = {
+            "value": value,
+            "confidence": evidence.confidence,
+            "source_evidence_count": max(1, len(matching_candidates)),
+            "sources": _metadata_resolution_sources(matching_candidates, evidence),
+            "conflicts": conflicts,
+            "status": "needs_review" if evidence.requires_review or conflicts else "pass",
+            "source_file": evidence.file,
+            "source_type": evidence.source_type,
+            "source_region": evidence.source_region,
+            "source_page": evidence.page_hint,
+            "paragraph_index": evidence.paragraph_index,
+            "evidence_text": evidence.evidence_text,
+            "rule": evidence.extractor_rule or evidence.method,
+        }
+    return report
+
+
+def _metadata_resolution_sources(candidates: list[dict], evidence: SourceEvidence) -> list[str]:
+    if candidates:
+        sources: list[str] = []
+        for candidate in candidates:
+            region = candidate.get("source_region") or "unknown"
+            page = candidate.get("source_page")
+            paragraph = candidate.get("paragraph_index")
+            if page is not None:
+                sources.append(f"{region}:p{page}")
+            elif paragraph is not None:
+                sources.append(f"{region}:paragraph{paragraph}")
+            else:
+                sources.append(str(region))
+        return sources
+    if evidence.page_hint is not None:
+        return [f"{evidence.source_region or 'unknown'}:p{evidence.page_hint}"]
+    if evidence.paragraph_index is not None:
+        return [f"{evidence.source_region or 'unknown'}:paragraph{evidence.paragraph_index}"]
+    return [evidence.source_region or evidence.method]
+
+
+def _metadata_region(index: int) -> str:
+    if index < 12:
+        return "cover"
+    if index < 40:
+        return "frontmatter"
+    return "body"
 
 
 def _metadata_value_key(value: str) -> str:
@@ -330,7 +665,7 @@ def _metadata_value_key(value: str) -> str:
 
 def _metadata_scan_units(blocks: list[TextBlock]) -> list[ScanUnit]:
     units = [
-        ScanUnit(block.text, block, _metadata_method(block), 0.9 if block.kind == "paragraph" else 0.82)
+        ScanUnit(block.text, block, _metadata_method(block), _metadata_confidence(block))
         for block in blocks
     ]
 
@@ -344,7 +679,7 @@ def _metadata_scan_units(blocks: list[TextBlock]) -> list[ScanUnit]:
         row_blocks.sort(key=lambda item: item.cell_index or 0)
         row_text = " ".join(block.text for block in row_blocks if block.text)
         if row_text:
-            units.append(ScanUnit(row_text, row_blocks[0], "metadata-table-row", 0.92))
+            units.append(ScanUnit(row_text, row_blocks[0], "metadata-raw-docx-xml-table-row", 0.96))
 
     return sorted(
         units,
@@ -356,7 +691,19 @@ def _metadata_scan_units(blocks: list[TextBlock]) -> list[ScanUnit]:
 
 
 def _metadata_method(block: TextBlock) -> str:
-    return "metadata-table-cell" if block.kind == "table_cell" else "metadata-paragraph"
+    if block.kind == "table_cell":
+        return "metadata-raw-docx-xml-table-cell"
+    if block.kind == "textbox":
+        return "metadata-raw-docx-xml-textbox"
+    return "metadata-raw-docx-xml-paragraph"
+
+
+def _metadata_confidence(block: TextBlock) -> float:
+    if block.kind == "textbox":
+        return 0.94
+    if block.kind == "table_cell":
+        return 0.86
+    return 0.9
 
 
 def _extract_value_for_field(field: str, text: str) -> str:
@@ -494,12 +841,17 @@ def _split_content(
     front_matter_lines: dict[str, list[str]] = {}
     sections: list[ContentBlock] = []
     references: list[ContentBlock] = []
+    reference_lines: list[tuple[str, TextBlock]] = []
     appendices: list[ContentBlock] = []
     current: ContentBlock | None = None
     mode: str | None = None
 
     for block in blocks:
         text = block.text
+        if block.kind == "equation":
+            if current is not None and mode in {"body", "acknowledgements", "appendix"}:
+                current.text = _append_text(current.text, text)
+            continue
         if block.kind == "table_cell":
             continue
         if _is_toc_heading(text):
@@ -574,15 +926,7 @@ def _split_content(
 
         if mode == "references":
             if _is_reference_entry(text) or _detect_heading(block) is None:
-                reference_text = _normalize_reference_entry_text(text, len(references) + 1)
-                references.append(
-                    ContentBlock(
-                        id=f"ref-{len(references) + 1}",
-                        type="reference",
-                        text=reference_text,
-                        source=_source("docx-reference", block.index, 0.86, False),
-                    )
-                )
+                reference_lines.append((text, block))
                 continue
 
         heading = _detect_heading(block)
@@ -604,8 +948,38 @@ def _split_content(
             current.text = _append_text(current.text, text)
 
     sections = _repair_auto_numbered_headings(sections)
+    references = _reference_blocks_from_lines(reference_lines)
     front_matter = {key: "\n".join(value).strip() for key, value in front_matter_lines.items() if value}
     return front_matter, sections, references, appendices
+
+
+def _reference_blocks_from_lines(lines: list[tuple[str, TextBlock]]) -> list[ContentBlock]:
+    values = [text for text, _block in lines if text.strip()]
+    if not values:
+        return []
+    merged = merge_reference_entries(values)
+    if not merged:
+        merged = [numbered_reference(text, index + 1) for index, text in enumerate(values)]
+    first_by_text = {text: block for text, block in lines}
+    references: list[ContentBlock] = []
+    for index, text in enumerate(merged):
+        source_block = _source_block_for_reference(text, first_by_text, lines)
+        references.append(
+            ContentBlock(
+                id=f"ref-{index + 1}",
+                type="reference",
+                text=numbered_reference(text, index + 1),
+                source=_source("docx-reference", source_block.index if source_block else None, 0.86, False),
+            )
+        )
+    return references
+
+
+def _source_block_for_reference(text: str, first_by_text: dict[str, TextBlock], lines: list[tuple[str, TextBlock]]) -> TextBlock | None:
+    for raw, block in lines:
+        if text.startswith(raw) or raw in text:
+            return block
+    return lines[0][1] if lines else None
 
 
 def _append_inline_after_heading(lines: dict[str, list[str]], key: str, text: str) -> None:
@@ -818,6 +1192,7 @@ def _extract_omml_equations(document_xml: bytes) -> list[EquationItem]:
     except etree.XMLSyntaxError:
         return []
 
+    paragraph_positions = _body_paragraph_positions(root)
     omml_nodes = root.xpath("//*[local-name()='oMathPara']")
     omml_nodes.extend(root.xpath("//*[local-name()='oMath' and not(ancestor::*[local-name()='oMathPara'])]"))
     equations: list[EquationItem] = []
@@ -825,13 +1200,14 @@ def _extract_omml_equations(document_xml: bytes) -> list[EquationItem]:
         text = "".join(node.xpath(".//*[local-name()='t']/text()")).strip()
         omml = etree.tostring(node, encoding="unicode")
         review_required = True
+        paragraph_index = _ancestor_body_paragraph_index(node, paragraph_positions)
         equations.append(
             EquationItem(
                 id=f"eq-{len(equations) + 1}",
                 kind="omml",
                 text=text,
                 omml=omml,
-                source=_source("docx-omml", None, 0.95, review_required),
+                source=_source("docx-omml", paragraph_index, 0.95, review_required),
                 requires_review=review_required,
             )
         )
@@ -850,6 +1226,7 @@ def _extract_embedded_equations(
         return []
 
     relationships = _document_relationship_targets(docx_zip)
+    paragraph_positions = _body_paragraph_positions(root)
     equations: list[EquationItem] = []
     used_preview_names: set[str] = set()
     used_object_names: set[str] = set()
@@ -860,12 +1237,14 @@ def _extract_embedded_equations(
         relationship_id = ole_object.get(RELATIONSHIP_ID_ATTR) or ""
         target = relationships.get(relationship_id, "")
         display_name = Path(target).name if target else str(ole_object.get("ObjectID") or "embedded-equation")
+        equation_id = f"eq-{existing_count + len(equations) + 1}"
         object_path = _extract_ole_payload(
             docx_zip,
             target,
             work_dir,
             used_object_names,
         )
+        native_info = _extract_ole_native_equation_stream(object_path, work_dir, equation_id)
         preview_path = _extract_ole_preview_image(
             docx_zip,
             ole_object,
@@ -873,19 +1252,53 @@ def _extract_embedded_equations(
             work_dir,
             used_preview_names,
         )
+        paragraph_index = _ancestor_body_paragraph_index(ole_object, paragraph_positions)
         equations.append(
             EquationItem(
-                id=f"eq-{existing_count + len(equations) + 1}",
+                id=equation_id,
                 kind="embedded-object",
                 text=display_name,
                 preview_path=str(preview_path.resolve()) if preview_path is not None else "",
                 object_path=str(object_path.resolve()) if object_path is not None else "",
+                native_path=str(native_info.get("native_path") or ""),
+                native_format=str(native_info.get("native_format") or ""),
+                native_stream_name=str(native_info.get("native_stream_name") or ""),
+                native_sha256=str(native_info.get("native_sha256") or ""),
+                native_size=int(native_info.get("native_size") or 0),
                 object_xml=_extract_ole_object_xml(ole_object),
-                source=_source("docx-embedded-equation", None, 0.78, True),
+                source=_source("docx-embedded-equation", paragraph_index, 0.78, True),
                 requires_review=True,
             )
         )
     return equations
+
+
+def _extract_ole_native_equation_stream(object_path: Path | None, work_dir: Path, equation_id: str) -> dict[str, Any]:
+    if object_path is None or not object_path.exists():
+        return {}
+    try:
+        payload = object_path.read_bytes()
+    except OSError:
+        return {}
+    destination = work_dir / "equation-native" / f"{_safe_equation_asset_stem(equation_id)}.mtef"
+    return extract_mathtype_native_stream(payload, destination)
+
+
+def _safe_equation_asset_stem(equation_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(equation_id or "equation")).strip("._") or "equation"
+
+
+def _body_paragraph_positions(root) -> dict[str, int]:
+    paragraphs = root.xpath("//*[local-name()='body']/*[local-name()='p']")
+    tree = root.getroottree()
+    return {tree.getpath(paragraph): index for index, paragraph in enumerate(paragraphs)}
+
+
+def _ancestor_body_paragraph_index(node, paragraph_positions: dict[str, int]) -> int | None:
+    paragraphs = node.xpath("ancestor::*[local-name()='p'][1]")
+    if not paragraphs:
+        return None
+    return paragraph_positions.get(node.getroottree().getpath(paragraphs[0]))
 
 
 def _extract_ole_preview_image(
@@ -993,13 +1406,24 @@ def _source(
     paragraph_index: int | None,
     confidence: float,
     requires_review: bool,
+    *,
+    source_type: str = "docx",
+    source_region: str = "",
+    evidence_text: str = "",
+    extractor_rule: str = "",
+    page_hint: int | None = None,
 ) -> SourceEvidence:
     return SourceEvidence(
         file=SOURCE_DOCX_NAME,
         method=method,
         paragraph_index=paragraph_index,
+        page_hint=page_hint,
         confidence=confidence,
         requires_review=requires_review,
+        source_type=source_type,
+        source_region=source_region,
+        evidence_text=evidence_text,
+        extractor_rule=extractor_rule or method,
     )
 
 

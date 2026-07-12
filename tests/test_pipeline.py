@@ -12,6 +12,9 @@ from buaa_thesis_kit.models import ContentBlock, EquationItem, ThesisModel
 from buaa_thesis_kit.validate import validate_clean_output
 
 
+pytestmark = pytest.mark.legacy_word
+
+
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -19,6 +22,7 @@ SUCCESS_OUTPUT_NAMES = [
     "harness",
     "image",
     "model.json",
+    "render_smoke",
     "report.md",
     "template_diff",
     "template_inheritance_report.json",
@@ -335,10 +339,17 @@ def test_run_pipeline_pdf_failure_reports_blocking_without_process_files(tmp_pat
     assert any("pdf export" in item.lower() for item in report["blocking_items"])
     assert any("thesis.pdf" in item for item in report["blocking_items"])
     allowed_json = {
+        "artifact_identity.json",
+        "bad_fixture_regression_report.json",
+        "evidence_packet.json",
+        "failure_queue.json",
+        "gate_board.json",
+        "instrumented_template_report.json",
         "model.json",
         "template_inheritance_report.json",
         "model_validation_report.json",
         "output_text_report.json",
+        "role_quiz_report.json",
         "status.json",
     }
     assert not any(

@@ -29,4 +29,7 @@ Write the audit manifest to `output/image/visual_review.json`. It contains
 
 Each page has one independent, real raster screenshot. A review binds exactly
 one PDF page, and its `bbox` must remain inside that page. Complete page coverage
-is required: the review page union must cover every PDF page. Every non-pass failure_ids entry must exist in the active failure_queue.json.
+is required: the review page union must cover every PDF page. Harness must
+independently rasterize the declared page and bbox at a supported fixed scale and
+compare exact pixels; a merely decodable or unrelated image is not evidence.
+Every non-pass failure_ids entry must exist in the active failure_queue.json.

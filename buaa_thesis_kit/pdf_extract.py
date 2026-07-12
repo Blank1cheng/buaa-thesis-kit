@@ -18,6 +18,7 @@ from buaa_thesis_kit.models import (
     ThesisModel,
 )
 from buaa_thesis_kit.latex_to_omml import latex_to_omml
+from buaa_thesis_kit.extract.task_book_extract import extract_task_book_from_blocks
 from buaa_thesis_kit.structure_parse import (
     PdfTextLine as PdfLine,
     extract_equations_from_sections,
@@ -58,7 +59,15 @@ FIELD_LABELS: dict[str, tuple[str, ...]] = {
     "title_en": ("English Title", "Title in English", "Title"),
     "student_name": ("学生姓名", "作者姓名", "Student Name", "Author", "Name"),
     "student_id": ("学生学号", "学号", "Student ID", "Student No", "Student Number"),
-    "college": ("学院名称", "所在学院", "学院", "College", "School"),
+    "college": (
+        "院（系）名称",
+        "院(系)名称",
+        "学院名称",
+        "所在学院",
+        "学院",
+        "College",
+        "School",
+    ),
     "major": ("专业名称", "专业", "Major"),
     "advisor": ("指导教师姓名", "指导教师", "导师", "Advisor", "Supervisor"),
     "date": ("完成日期", "提交日期", "日期", "Date"),
@@ -100,6 +109,9 @@ NEXT_LINE_LABELS: dict[str, str] = {
     "1分类号": "classification",
     "1 分类号": "classification",
     "中图分类号": "classification",
+    "院（系）名称": "college",
+    "院(系)名称": "college",
+    "学院名称": "college",
 }
 VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("学", "号"), "student_id"),
@@ -111,6 +123,8 @@ VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
 TITLE_ANCHORS = {"毕业设计(论文)", "毕业设计（论文）", "本科毕业设计(论文)", "本科毕业设计（论文）"}
 BUAA_SPINE_MARKER = "论文封面书脊"
 BUAA_TASK_BOOK_TITLE = "本科生毕业设计（论文）任务书"
+PDF_EQUATION_NUMBER_RE = re.compile(r"^\(\s*(\d+(?:[.\-]\d+)+)\s*\)$")
+PDF_MATH_FONT_MARKERS = ("symbol", "mt-extra", "math", "cmmi", "cmsy", "italic")
 
 
 def extract_pdf_model(
@@ -159,9 +173,18 @@ def extract_pdf_model(
             return model
 
         lines: list[PdfLine] = []
+        positioned_equations: list[EquationItem] = []
         line_index = 0
         for page_index in range(document.page_count):
             page = document.load_page(page_index)
+            positioned_equations.extend(
+                _extract_page_equation_regions(
+                    page,
+                    work,
+                    page_index + 1,
+                    len(positioned_equations) + 1,
+                )
+            )
             page_lines = _page_text_lines(page, page_index + 1, line_index)
             if page_lines:
                 lines.extend(page_lines)
@@ -189,6 +212,7 @@ def extract_pdf_model(
 
         if lines:
             model.metadata = _extract_metadata(lines)
+            model.task_book = extract_task_book_from_blocks(lines, model.metadata.to_dict())
             parsed = parse_pdf_structure(lines, source_file=SOURCE_PDF_NAME)
             model.front_matter = parsed.front_matter
             model.sections = parsed.sections
@@ -210,6 +234,8 @@ def extract_pdf_model(
             model.extraction_warnings.append(
                 "OCR required: PDF has no extractable text; generated Word/TeX content uses rendered page images only."
             )
+
+        model.equations = _merge_pdf_equation_sources(model.equations, positioned_equations)
 
         if any(figure.type == "pdf-figure-image" for figure in model.figures):
             model.extraction_warnings.append(
@@ -630,7 +656,7 @@ def _horizontal_overlap(
 
 
 def _extract_metadata(lines: list[PdfLine]) -> Metadata:
-    metadata = Metadata()
+    metadata = Metadata(unit_code="")
     for field, labels in FIELD_LABELS.items():
         for line in lines[:120]:
             value = _extract_labeled_value(line.text, labels)
@@ -647,8 +673,12 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
                 method="pdf-text-label",
                 paragraph_index=line.index,
                 page_hint=line.page,
-                confidence=0.7,
+                confidence=0.82,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(line.page),
+                evidence_text=line.text,
+                extractor_rule="pdf-text-label",
             )
             break
 
@@ -670,6 +700,10 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
                 page_hint=guessed.page,
                 confidence=0.4,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(guessed.page),
+                evidence_text=guessed.text,
+                extractor_rule="pdf-title-heuristic",
             )
 
     if not metadata.unit_code:
@@ -679,6 +713,10 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
             method="metadata-default",
             confidence=0.6,
             requires_review=False,
+            source_type="pdf",
+            source_region="default",
+            evidence_text="10006",
+            extractor_rule="metadata-default",
         )
     return metadata
 
@@ -719,8 +757,12 @@ def _apply_cover_metadata_heuristics(metadata: Metadata, lines: list[PdfLine]) -
                 method="pdf-cover-title-anchor",
                 paragraph_index=title_line.index,
                 page_hint=title_line.page,
-                confidence=0.55,
+                confidence=0.82,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(title_line.page),
+                evidence_text=title_text,
+                extractor_rule="pdf-cover-title-anchor",
             )
 
 
@@ -741,10 +783,12 @@ def _set_metadata_field(
     line: PdfLine,
     method: str,
 ) -> None:
-    if getattr(metadata, field):
-        return
     cleaned = _clean_metadata_value(field, value)
     if not cleaned:
+        return
+    if getattr(metadata, field) and metadata.evidence.get(field):
+        return
+    if getattr(metadata, field) and str(getattr(metadata, field)) != cleaned:
         return
     setattr(metadata, field, cleaned)
     metadata.evidence[field] = SourceEvidence(
@@ -752,9 +796,29 @@ def _set_metadata_field(
         method=method,
         paragraph_index=line.index,
         page_hint=line.page,
-        confidence=0.55,
+        confidence=_pdf_metadata_confidence(method, line),
         requires_review=True,
+        source_type="pdf",
+        source_region=_pdf_source_region(line.page),
+        evidence_text=line.text,
+        extractor_rule=method,
     )
+
+
+def _pdf_metadata_confidence(method: str, line: PdfLine) -> float:
+    if method in {"pdf-next-line-label", "pdf-vertical-label", "pdf-date-line", "pdf-cover-title-anchor"}:
+        return 0.82 if line.page <= 2 else 0.78
+    if method == "pdf-text-label":
+        return 0.82
+    return 0.7
+
+
+def _pdf_source_region(page: int | None) -> str:
+    if page in {1, 2}:
+        return "cover"
+    if page and page <= 8:
+        return "frontmatter"
+    return "body"
 
 
 def _clean_metadata_value(field: str, value: str) -> str:
@@ -1070,6 +1134,172 @@ def _extract_equations_from_sections(
             )
         )
     return rendered_sections, equations
+
+
+def _extract_page_equation_regions(page, work_dir: Path, page_number: int, starting_number: int) -> list[EquationItem]:
+    try:
+        layout = page.get_text("dict") or {}
+    except Exception:
+        return []
+    records: list[dict[str, Any]] = []
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            spans = [span for span in line.get("spans", []) if str(span.get("text") or "").strip()]
+            if not spans:
+                continue
+            text = "".join(str(span.get("text") or "") for span in spans).strip()
+            records.append({"bbox": tuple(line.get("bbox") or (0, 0, 0, 0)), "text": text, "spans": spans})
+    page_width = float(getattr(getattr(page, "rect", None), "width", 0.0) or 0.0)
+    anchors = [
+        record
+        for record in records
+        if PDF_EQUATION_NUMBER_RE.fullmatch(record["text"])
+        and float(record["bbox"][0]) >= page_width * 0.65
+    ]
+    if not anchors:
+        return []
+    output_dir = work_dir / "pdf-equations"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    equations: list[EquationItem] = []
+    for offset, anchor in enumerate(anchors):
+        match = PDF_EQUATION_NUMBER_RE.fullmatch(anchor["text"])
+        if match is None:
+            continue
+        anchor_bbox = tuple(float(value) for value in anchor["bbox"])
+        eligible: list[dict[str, Any]] = []
+        for record in records:
+            for span in record["spans"]:
+                span_text = str(span.get("text") or "").strip()
+                span_bbox = tuple(float(value) for value in span.get("bbox") or (0, 0, 0, 0))
+                if not span_text or span_bbox[2] >= anchor_bbox[0] - 3:
+                    continue
+                if span_bbox[3] < anchor_bbox[1] - 55 or span_bbox[1] > anchor_bbox[3] + 55:
+                    continue
+                if not _is_pdf_math_span(span_text, str(span.get("font") or "")):
+                    continue
+                eligible.append({"text": span_text, "bbox": span_bbox})
+        selected = _vertical_formula_cluster(eligible, anchor_bbox)
+        if not selected:
+            continue
+        x0 = min(item["bbox"][0] for item in selected)
+        y0 = min(item["bbox"][1] for item in selected)
+        x1 = max(item["bbox"][2] for item in selected)
+        y1 = max(item["bbox"][3] for item in selected)
+        if x1 - x0 < 8 or y1 - y0 < 5:
+            continue
+        clip = _bounded_pdf_rect(page, x0 - 6, y0 - 2, min(x1 + 6, anchor_bbox[0] - 5), y1 + 2)
+        if clip is None:
+            continue
+        number = match.group(1)
+        safe_number = re.sub(r"[^0-9A-Za-z.-]", "_", number)
+        equation_id = f"pdf-region-p{page_number:03d}-{safe_number}"
+        preview = output_dir / f"{equation_id}.png"
+        try:
+            pixmap = page.get_pixmap(matrix=_fitz_matrix(300 / 72), clip=clip, alpha=False)
+            pixmap.save(str(preview))
+        except Exception:
+            continue
+        source_text = " ".join(
+            item["text"]
+            for item in sorted(selected, key=lambda value: (round(value["bbox"][1], 1), value["bbox"][0]))
+        )
+        equations.append(
+            EquationItem(
+                id=equation_id,
+                kind="pdf-image-equation",
+                text=source_text,
+                number=f"({number})",
+                preview_path=str(preview.resolve()),
+                region_bbox=[round(float(value), 3) for value in (clip.x0, clip.y0, clip.x1, clip.y1)],
+                source=SourceEvidence(
+                    file=SOURCE_PDF_NAME,
+                    method="pdf-equation-region",
+                    page_hint=page_number,
+                    confidence=0.9,
+                    requires_review=True,
+                ),
+                requires_review=True,
+            )
+        )
+    return equations
+
+
+def _is_pdf_math_span(text: str, font: str) -> bool:
+    value = str(text or "").strip()
+    if not value or PDF_EQUATION_NUMBER_RE.fullmatch(value):
+        return False
+    if any("\ue000" <= char <= "\uf8ff" for char in value):
+        return True
+    normalized_font = str(font or "").casefold()
+    if any(marker in normalized_font for marker in PDF_MATH_FONT_MARKERS):
+        return not bool(re.search(r"[\u3400-\u9fff]", value))
+    return not re.search(r"[\u3400-\u9fff]", value) and bool(
+        re.search(r"[A-Za-z0-9=+\-*/^_(),.\[\]{}]", value)
+    )
+
+
+def _vertical_formula_cluster(items: list[dict[str, Any]], anchor_bbox: tuple[float, float, float, float]) -> list[dict[str, Any]]:
+    selected = [item for item in items if _vertical_intersects(item["bbox"], anchor_bbox, padding=3)]
+    if not selected:
+        return []
+    changed = True
+    while changed:
+        changed = False
+        top = min(item["bbox"][1] for item in selected)
+        bottom = max(item["bbox"][3] for item in selected)
+        cluster = (0.0, top, 0.0, bottom)
+        for item in items:
+            if item in selected or not _vertical_intersects(item["bbox"], cluster, padding=3):
+                continue
+            selected.append(item)
+            changed = True
+    return selected
+
+
+def _vertical_intersects(left: tuple[float, float, float, float], right: tuple[float, float, float, float], *, padding: float) -> bool:
+    return float(left[3]) >= float(right[1]) - padding and float(left[1]) <= float(right[3]) + padding
+
+
+def _bounded_pdf_rect(page, x0: float, y0: float, x1: float, y1: float):
+    try:
+        import fitz
+    except ImportError:
+        return None
+    page_rect = page.rect
+    rect = fitz.Rect(
+        max(float(page_rect.x0), x0),
+        max(float(page_rect.y0), y0),
+        min(float(page_rect.x1), x1),
+        min(float(page_rect.y1), y1),
+    )
+    return rect if rect.width > 1 and rect.height > 1 else None
+
+
+def _fitz_matrix(scale: float):
+    import fitz
+
+    return fitz.Matrix(scale, scale)
+
+
+def _merge_pdf_equation_sources(
+    parsed_equations: list[EquationItem],
+    positioned_equations: list[EquationItem],
+) -> list[EquationItem]:
+    merged = list(parsed_equations)
+    parsed_keys = {
+        (str(item.number or ""), item.source.page_hint if item.source else None)
+        for item in parsed_equations
+        if item.number
+    }
+    for equation in positioned_equations:
+        key = (str(equation.number or ""), equation.source.page_hint if equation.source else None)
+        if key in parsed_keys:
+            continue
+        parsed_keys.add(key)
+        merged.append(equation)
+    return merged
 
 
 def _looks_like_equation_line(text: str) -> bool:

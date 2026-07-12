@@ -57,6 +57,23 @@ def _write_png(path: Path) -> None:
     Image.new("RGB", (16, 16), color="white").save(path, format="PNG")
 
 
+def _write_pdf_screenshot(
+    pdf_path: Path,
+    *,
+    page_number: int,
+    bbox: list[float],
+    destination: Path,
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with fitz.open(pdf_path) as document:
+        pixmap = document[page_number - 1].get_pixmap(
+            matrix=fitz.Matrix(2, 2),
+            clip=fitz.Rect(bbox),
+            alpha=False,
+        )
+        pixmap.save(destination)
+
+
 def _valid_failure(*, status: str = "needs_review") -> dict[str, object]:
     return {
         "id": "H-G28-001",
@@ -183,7 +200,13 @@ def _write_visual_manifest(
     reviews = []
     for index, region in enumerate(regions, start=1):
         screenshot = f"{region}.png"
-        _write_png(output / "image" / screenshot)
+        bbox = [0, 0, 100, 100]
+        _write_pdf_screenshot(
+            output / "thesis.pdf",
+            page_number=index,
+            bbox=bbox,
+            destination=output / "image" / screenshot,
+        )
         reviews.append(
             {
                 "region": region,
@@ -191,7 +214,7 @@ def _write_visual_manifest(
                 "screenshot": screenshot,
                 "status": review_status,
                 "checks": ["content", "layout"],
-                "bbox": [0, 0, 100, 100],
+                "bbox": bbox,
                 "failure_ids": (
                     [] if review_status == "pass" else [f"H-G28-{index:03d}"]
                 ),
@@ -896,6 +919,26 @@ def test_complete_visual_manifest_passes_all_visual_gates(delivery_bundle):
     assert result["gates"]["V02"]["status"] == "pass"
 
 
+def test_visual_manifest_rejects_decodable_image_unrelated_to_pdf_page(
+    delivery_bundle,
+):
+    manifest = delivery_bundle["output"] / "image" / "visual_review.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    screenshot = (
+        delivery_bundle["output"]
+        / "image"
+        / payload["reviews"][0]["screenshot"]
+    )
+    _write_png(screenshot)
+
+    result = validate_visual_manifest(delivery_bundle["output"], manifest)
+
+    assert result["status"] == "failed"
+    assert "visual_screenshot_pdf_mismatch" in {
+        item["reason"] for item in result["failures"]
+    }
+
+
 def test_visual_manifest_pdf_page_count_must_match_actual_pdf(delivery_bundle):
     manifest = delivery_bundle["output"] / "image" / "visual_review.json"
     payload = json.loads(manifest.read_text(encoding="utf-8"))
@@ -1064,7 +1107,12 @@ def test_visual_manifest_allows_same_region_on_different_pages(delivery_bundle):
     manifest = delivery_bundle["output"] / "image" / "visual_review.json"
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     screenshot = delivery_bundle["output"] / "image" / "cover-page-2.png"
-    _write_png(screenshot)
+    _write_pdf_screenshot(
+        delivery_bundle["output"] / "thesis.pdf",
+        page_number=2,
+        bbox=payload["reviews"][0]["bbox"],
+        destination=screenshot,
+    )
     extra = dict(payload["reviews"][0])
     extra["pages"] = [2]
     extra["screenshot"] = screenshot.name

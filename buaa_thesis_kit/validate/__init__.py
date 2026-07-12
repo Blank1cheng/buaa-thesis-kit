@@ -15,7 +15,7 @@ REQUIRED_TOP_LEVEL = {
     "model.json",
     "template_inheritance_report.json",
 }
-OPTIONAL_TOP_LEVEL = {"harness", "layout_consistency_report.json", "template_diff"}
+OPTIONAL_TOP_LEVEL = {"harness", "layout_consistency_report.json", "template_diff", "render_smoke"}
 ALLOWED_TOP_LEVEL = REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
 REQUIRED_FILES = ("thesis.docx", "thesis.pdf", "thesis.tex", "report.md")
 REQUIRED_REPORT_OUTPUT_ALIASES = (

@@ -1,0 +1,77 @@
+% BUAA undergraduate thesis LaTeX feasibility spike.
+% Source of thesis content: model.json rendered by buaa_thesis_kit.latex_renderer.
+\documentclass[UTF8,a4paper,12pt,oneside]{ctexbook}
+
+\usepackage{geometry}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{setspace}
+\usepackage{ulem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\geometry{top=30mm,bottom=25mm,left=30mm,right=20mm,headsep=5mm,includefoot}
+\hypersetup{hidelinks}
+\graphicspath{{figure/}{assets/}}
+\linespread{1.5}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\renewcommand{\bibname}{参考文献}
+
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
+\IfFontExistsTF{SimSun}{\setCJKmainfont{SimSun}}{}
+\IfFontExistsTF{SimHei}{\setCJKsansfont{SimHei}}{}
+
+\ctexset{
+  chapter = {
+    name = {},
+    number = \arabic{chapter},
+    format = {\centering\heiti\zihao{3}},
+    beforeskip = 18bp,
+    afterskip = 18bp
+  },
+  section = {
+    format = {\heiti\zihao{4}},
+    beforeskip = 12bp,
+    afterskip = 6bp
+  },
+  subsection = {
+    format = {\heiti\zihao{-4}},
+    beforeskip = 10bp,
+    afterskip = 5bp
+  }
+}
+
+\captionsetup[figure]{font={small},labelsep=quad}
+\captionsetup[table]{font={small},labelsep=quad}
+\renewcommand{\thefigure}{\arabic{chapter}.\arabic{figure}}
+\renewcommand{\thetable}{\arabic{chapter}.\arabic{table}}
+\renewcommand{\theequation}{\arabic{chapter}.\arabic{equation}}
+
+\newcommand{\BUAAShortUnderline}[1]{\uline{\makebox[31mm][c]{#1}}}
+\newcommand{\BUAALongUnderline}[1]{\uline{\makebox[82mm][c]{#1}}}
+\newcommand{\BUAAPlaceholderBox}[2]{%
+  \begin{center}
+  \fbox{\begin{minipage}{0.78\textwidth}\centering\zihao{-4}\heiti #1\\[0.6ex]\songti #2\end{minipage}}
+  \end{center}
+}
+
+\begin{document}
+<<COVER>>
+
+\frontmatter
+<<DECLARATION>>
+<<ABSTRACT_CN>>
+<<ABSTRACT_EN>>
+\tableofcontents
+\clearpage
+
+\mainmatter
+<<BODY>>
+<<ACKNOWLEDGEMENT>>
+<<REFERENCES>>
+\end{document}

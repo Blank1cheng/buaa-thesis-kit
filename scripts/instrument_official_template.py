@@ -11,6 +11,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import yaml
 from lxml import etree
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,8 @@ TEXT_TAGS = {
 }
 DEFAULT_INPUT = ROOT / "templates" / "official" / "buaa_undergraduate_template.docx"
 DEFAULT_OUTPUT = ROOT / "templates" / "official" / "buaa_undergraduate_template_instrumented.docx"
+HARNESS_CONFIG_DIR = ROOT / "buaa_thesis_kit" / "harness" / "config"
+SPINE_XML_MARKER = "BUAA_VERTICAL_SPINE"
 REQUIRED_PLACEHOLDERS = {
     "UNIT_CODE",
     "STUDENT_ID",
@@ -86,7 +89,11 @@ def instrument_official_template(template_path: Path, output_path: Path = DEFAUL
 
     replacements = _instrument_known_regions(body)
     _ensure_toc_field(body)
+    _remove_frontmatter_outline_levels(body)
+    _remove_existing_toc_results(body)
     _instrument_body_range(body)
+    _purify_instrumented_template(root, body)
+    _ensure_spine_xml_marker(body)
     document_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
     all_placeholders = set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", document_xml.decode("utf-8", errors="ignore")))
     missing_placeholders = sorted(REQUIRED_PLACEHOLDERS - all_placeholders)
@@ -95,7 +102,12 @@ def instrument_official_template(template_path: Path, output_path: Path = DEFAUL
         temp_output = Path(temp_dir) / "instrumented.docx"
         with zipfile.ZipFile(source, "r") as src, zipfile.ZipFile(temp_output, "w", zipfile.ZIP_DEFLATED) as dst:
             for item in src.infolist():
-                data = document_xml if item.filename == "word/document.xml" else src.read(item.filename)
+                if item.filename == "word/document.xml":
+                    data = document_xml
+                elif _is_header_footer_xml(item.filename):
+                    data = _purify_header_footer_xml(src.read(item.filename))
+                else:
+                    data = src.read(item.filename)
                 dst.writestr(item, data)
         shutil.move(str(temp_output), str(output))
 
@@ -191,6 +203,32 @@ def _ensure_toc_field(body: etree._Element) -> None:
     toc_paragraph.append(_toc_field())
 
 
+def _remove_frontmatter_outline_levels(body: etree._Element) -> None:
+    paragraphs = body.findall(".//w:p", NS)
+    toc_index = _find_toc_paragraph_index(paragraphs)
+    if toc_index is None:
+        return
+    for paragraph in paragraphs[:toc_index]:
+        outline = paragraph.find("w:pPr/w:outlineLvl", NS)
+        if outline is not None:
+            parent = outline.getparent()
+            if parent is not None:
+                parent.remove(outline)
+
+
+def _remove_existing_toc_results(body: etree._Element) -> None:
+    children = [child for child in body if child.tag == f"{{{W_NS}}}p"]
+    toc_index = _find_toc_paragraph_index(children)
+    if toc_index is None:
+        return
+    body_start = _find_body_start(children, toc_index)
+    if body_start is None or body_start <= toc_index + 1:
+        return
+    parent = children[toc_index].getparent()
+    for paragraph in children[toc_index + 1 : body_start]:
+        parent.remove(paragraph)
+
+
 def _instrument_body_range(body: etree._Element) -> None:
     children = [child for child in body if child.tag == f"{{{W_NS}}}p"]
     toc_index = _find_toc_paragraph_index(children)
@@ -222,6 +260,108 @@ def _instrument_body_range(body: etree._Element) -> None:
         acknowledgement_body = _clone_marker(refreshed_children[refreshed_reference], "{{ACKNOWLEDGEMENT}}")
         parent.insert(parent.index(refreshed_children[refreshed_reference]), acknowledgement_title)
         parent.insert(parent.index(refreshed_children[refreshed_reference]), acknowledgement_body)
+
+
+def _purify_instrumented_template(root: etree._Element, body: etree._Element) -> None:
+    _remove_reference_tail(body)
+    _clear_paragraphs_containing_tokens(root, _purification_tokens())
+
+
+def _remove_reference_tail(body: etree._Element) -> None:
+    children = list(body)
+    reference_index = _index_of_paragraph_containing(children, "{{REFERENCES}}")
+    if reference_index is None:
+        return
+    for child in children[reference_index + 1 :]:
+        if child.tag == f"{{{W_NS}}}sectPr":
+            continue
+        body.remove(child)
+
+
+def _clear_paragraphs_containing_tokens(root: etree._Element, tokens: list[str]) -> None:
+    if not tokens:
+        return
+    for paragraph in root.findall(".//w:p", NS):
+        text = _element_text(paragraph)
+        if not text or not any(token and token in text for token in tokens):
+            continue
+        cleaned = text
+        for token in tokens:
+            cleaned = cleaned.replace(token, "")
+        if "{{" not in text and "}}" not in text:
+            cleaned = ""
+        _set_paragraph_text(paragraph, cleaned.strip())
+
+
+def _ensure_spine_xml_marker(body: etree._Element) -> None:
+    body_xml = etree.tostring(body, encoding="unicode")
+    if SPINE_XML_MARKER in body_xml:
+        return
+    paragraph = _find_paragraph(body, "{{SPINE_TITLE_CN}}")
+    if paragraph is None:
+        return
+    bookmark_id = str(_next_bookmark_id(body))
+    start = etree.Element(f"{{{W_NS}}}bookmarkStart")
+    start.set(f"{{{W_NS}}}id", bookmark_id)
+    start.set(f"{{{W_NS}}}name", SPINE_XML_MARKER)
+    end = etree.Element(f"{{{W_NS}}}bookmarkEnd")
+    end.set(f"{{{W_NS}}}id", bookmark_id)
+    paragraph.insert(0, start)
+    paragraph.insert(1, end)
+
+
+def _next_bookmark_id(root: etree._Element) -> int:
+    ids: list[int] = []
+    for element in root.findall(".//w:bookmarkStart", NS):
+        value = element.get(f"{{{W_NS}}}id", "")
+        if value.isdigit():
+            ids.append(int(value))
+    return (max(ids) + 1) if ids else 1
+
+
+def _is_header_footer_xml(name: str) -> bool:
+    return (name.startswith("word/header") or name.startswith("word/footer")) and name.endswith(".xml")
+
+
+def _purify_header_footer_xml(data: bytes) -> bytes:
+    try:
+        root = etree.fromstring(data, etree.XMLParser(remove_blank_text=False, resolve_entities=False))
+    except etree.XMLSyntaxError:
+        return data
+    changed = False
+    for paragraph in root.findall(".//w:p", NS):
+        text = _element_text(paragraph)
+        if not text or "PAGE" in text:
+            continue
+        cleaned = re.sub(r"第\s*(?:\d+|[IVXLCDMⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+)\s*页", "", text).strip()
+        if cleaned != text.strip():
+            _set_paragraph_text(paragraph, cleaned)
+            changed = True
+    if not changed:
+        return data
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _purification_tokens() -> list[str]:
+    data = _load_harness_yaml("template_sample_tokens.yaml")
+    return [
+        *[str(token) for token in data.get("template_instruction", [])],
+        *[str(token) for token in data.get("template_sample_value", [])],
+    ]
+
+
+def _load_harness_yaml(name: str) -> dict[str, Any]:
+    path = HARNESS_CONFIG_DIR / name
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _index_of_paragraph_containing(children: list[etree._Element], text: str) -> int | None:
+    for index, child in enumerate(children):
+        if child.tag == f"{{{W_NS}}}p" and text in _element_text(child):
+            return index
+    return None
 
 
 def _find_body_start(paragraphs: list[etree._Element], toc_index: int | None) -> int | None:

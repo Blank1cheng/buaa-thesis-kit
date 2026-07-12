@@ -4,13 +4,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from buaa_thesis_kit.latex_to_omml import latex_to_omml
 from buaa_thesis_kit.models import ContentBlock, EquationItem, SourceEvidence
 
 
 SOURCE_PDF_NAME = "source.pdf"
 HEADER_FOOTER_TOP_RATIO = 0.075
 HEADER_FOOTER_BOTTOM_RATIO = 0.94
+COVER_TITLE_ANCHORS = {"毕业设计(论文)", "毕业设计（论文）", "本科毕业设计(论文)", "本科毕业设计（论文）"}
+BUAA_SPINE_MARKER = "论文封面书脊"
+BUAA_TASK_BOOK_TITLE = "本科生毕业设计（论文）任务书"
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ def parse_pdf_structure(
         [line for line in lines if _clean_text(line.text)]
     )
     content_lines = _filter_header_footer(normalized_lines, result)
+    content_lines = _content_lines_without_buaa_cover_spine(content_lines)
 
     mode: str | None = None
     current: ContentBlock | None = None
@@ -80,7 +83,7 @@ def parse_pdf_structure(
             if _looks_like_toc_entry(text):
                 result.removed_toc_line_count += 1
                 continue
-            if not _looks_like_heading(text):
+            if not _looks_like_heading_line(line):
                 result.removed_toc_line_count += 1
                 continue
             mode = None
@@ -106,7 +109,7 @@ def parse_pdf_structure(
             continue
 
         if mode == "abstract" and active_abstract_key:
-            if _looks_like_heading(text) or _is_reference_heading(text) or _is_toc_heading(text):
+            if _looks_like_heading_line(line) or _is_reference_heading(text) or _is_toc_heading(text):
                 mode = None
                 active_abstract_key = None
             else:
@@ -135,7 +138,7 @@ def parse_pdf_structure(
         if _is_front_matter_noise(text):
             continue
 
-        if _looks_like_heading(text):
+        if _looks_like_heading_line(line):
             _flush_section(result.sections, current, current_text)
             level = _heading_level(text)
             current = ContentBlock(
@@ -192,6 +195,49 @@ def _filter_header_footer(
             continue
         kept.append(line)
     return kept
+
+
+def _content_lines_without_buaa_cover_spine(lines: list[PdfTextLine]) -> list[PdfTextLine]:
+    if not _looks_like_buaa_cover_with_spine(lines):
+        return lines
+    start_index = _first_line_after_buaa_cover_spine(lines)
+    if start_index is None:
+        return lines
+    return lines[start_index:]
+
+
+def _looks_like_buaa_cover_with_spine(lines: list[PdfTextLine]) -> bool:
+    first_lines = lines[:180]
+    title_anchors = {_compact(anchor) for anchor in COVER_TITLE_ANCHORS}
+    has_cover_anchor = any(_compact(line.text) in title_anchors for line in first_lines)
+    has_spine_marker = any(BUAA_SPINE_MARKER in _compact(line.text) for line in first_lines)
+    return has_cover_anchor and has_spine_marker
+
+
+def _first_line_after_buaa_cover_spine(lines: list[PdfTextLine]) -> int | None:
+    for index, line in enumerate(lines):
+        if line.page <= 2:
+            continue
+        compact = _compact(line.text)
+        if compact == "北京航空航天大学" and _next_line_contains(lines, index, BUAA_TASK_BOOK_TITLE):
+            return index
+        if BUAA_TASK_BOOK_TITLE in compact:
+            previous = lines[index - 1] if index > 0 else None
+            return max(0, index - 1) if previous and _compact(previous.text) == "北京航空航天大学" else index
+        if _abstract_heading_key(line.text) or _is_toc_heading(line.text) or _looks_like_heading(line.text):
+            return index
+    for index, line in enumerate(lines):
+        if line.page > 2:
+            return index
+    return None
+
+
+def _next_line_contains(lines: list[PdfTextLine], index: int, text: str) -> bool:
+    compact_text = _compact(text)
+    for candidate in lines[index + 1 : min(len(lines), index + 6)]:
+        if compact_text in _compact(candidate.text):
+            return True
+    return False
 
 
 def _is_header_footer_line(line: PdfTextLine) -> bool:
@@ -329,12 +375,64 @@ def _looks_like_heading(text: str) -> bool:
     value = _clean_text(text)
     if _looks_like_toc_entry(value):
         return False
-    numbered = re.match(r"^\d+(?:\.\d+)*\s+\S.{0,90}$", value)
+    if _looks_like_formula_heading_fragment(value):
+        return False
+    numbered = re.match(r"^(?:[1-9]|1\d|20)(?:\.\d+)*\s+\S.{0,90}$", value)
     if numbered:
         return True
     if "。" in value or "." in value:
         return False
     return bool(re.match(r"^第[一二三四五六七八九十百]+章\s+\S.{0,40}$", value))
+
+
+def _looks_like_heading_line(line: PdfTextLine) -> bool:
+    value = _clean_text(line.text)
+    if not _looks_like_heading(value):
+        return False
+
+    match = re.match(r"^((?:[1-9]|1\d|20)(?:\.\d+)*)\s+(.+)$", value)
+    if not match:
+        return True
+
+    number, title = match.groups()
+    has_layout_evidence = bool(line.bbox or line.size or line.page_width)
+    if not has_layout_evidence:
+        return True
+    if len(title) > 60 or re.search(r"[。；;：:,.]$", title):
+        return False
+    if line.bbox is not None and line.page_width:
+        line_width = line.bbox[2] - line.bbox[0]
+        if line_width > line.page_width * 0.7 and re.search(r"[，,；;：:。]", title):
+            return False
+    level = number.count(".") + 1
+    if level == 1:
+        if line.size and line.size < 11.5:
+            return False
+        if not line.size or line.size >= 13.5:
+            return True
+        if re.search(r"[+\-*/^_=<>≤≥≈]", title):
+            return False
+        return bool(
+            line.bbox is not None
+            and line.page_width
+            and line.bbox[0] <= line.page_width * 0.25
+        )
+    if line.bbox is not None and line.page_width:
+        return line.bbox[0] <= line.page_width * 0.25
+    return True
+
+
+def _looks_like_formula_heading_fragment(text: str) -> bool:
+    value = _clean_text(text)
+    match = re.match(r"^\d+(?:\.\d+)*\s+(.+)$", value)
+    if not match:
+        return False
+    tail = match.group(1).strip()
+    if re.fullmatch(r"[\d\s.,;:()\[\]{}+\-*/^_=<>≤≥≈∆∑√�−]+", tail):
+        return True
+    operator_count = len(re.findall(r"[+\-*/^_=<>≤≥≈∆∑√�−]", tail))
+    semantic_count = len(re.findall(r"[\u4e00-\u9fffA-Za-z]", tail))
+    return operator_count >= 1 and semantic_count < 3
 
 
 def _heading_level(text: str) -> int:
@@ -404,18 +502,15 @@ def _equation_from_pdf_line(
     latex = equation_text
     if equation_number:
         latex = _clean_text(latex[: -len(equation_number)])
-    omml = latex_to_omml(latex)
-    requires_review = not bool(omml)
-
     return EquationItem(
         id=f"pdf-equation-{number}",
         kind="pdf-text-equation",
         text=equation_text,
         number=equation_number,
         latex=latex,
-        omml=omml,
-        source=_section_source(section, source_file, requires_review=requires_review),
-        requires_review=requires_review,
+        omml="",
+        source=_section_source(section, source_file, requires_review=True),
+        requires_review=True,
     )
 
 

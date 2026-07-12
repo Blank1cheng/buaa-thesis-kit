@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 from lxml import etree
 
+from buaa_thesis_kit.harness.artifact_identity import attach_artifact_identity
 from buaa_thesis_kit.harness.roles import classify_text, role_allows_thesis
 
 
@@ -18,6 +19,21 @@ TEXT_TAGS = {f"{{{W_NS}}}t", f"{{{W_NS}}}instrText"}
 NS = {"w": W_NS}
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 MODEL_ALLOWED_PROCESS_TOKENS = {"output_work_", "image1.png", "image10.wmf"}
+SPINE_TEMPLATE_INSTRUCTION_TOKENS = (
+    "论文封面书脊",
+    "四号黑体字",
+    "小四号黑体字",
+)
+TASKBOOK_TEMPLATE_NOTE_TOKENS = (
+    "注：任务书应该附在已完成的毕业设计（论文）的首页",
+    "任务内容、进度安排和指导记录请以学校原始任务书为准",
+    "本页由规范化流水线",
+    "需人工复核",
+)
+TOC_TEMPLATE_SAMPLE_HEADING_TOKENS = (
+    "模板样例参考文献条目",
+    "参考文献样例条目",
+)
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -137,6 +153,12 @@ def validate_output_text_file(docx_path: Path, output_report: Path | None = None
     leaked_tokens = [token for token in _template_instruction_tokens() + _template_sample_tokens() if token in full_text]
     if leaked_tokens:
         failures.append({"id": "template_instructions_or_sample_leak", "tokens": sorted(set(leaked_tokens))})
+    spine_leaks = [token for token in SPINE_TEMPLATE_INSTRUCTION_TOKENS if token in full_text]
+    if spine_leaks:
+        failures.append({"id": "spine_template_instruction_leak", "tokens": sorted(set(spine_leaks))})
+    taskbook_leaks = [token for token in TASKBOOK_TEMPLATE_NOTE_TOKENS if token in full_text]
+    if taskbook_leaks:
+        failures.append({"id": "taskbook_template_note_leak", "tokens": sorted(set(taskbook_leaks))})
     if _contains_any(full_text, _region_rules().get("declaration_forbidden", [])):
         failures.append({"id": "declaration_wrong_template"})
     if re.search(r"\bT\s+P\s+2\s+7\s+3\b", full_text):
@@ -154,12 +176,14 @@ def validate_output_text_file(docx_path: Path, output_report: Path | None = None
         failures.append({"id": "toc_contains_declaration"})
     if _contains_any(toc, _region_rules().get("toc_forbidden", [])[1:]):
         failures.append({"id": "toc_contains_template_sample_reference"})
+    if _contains_any(toc, TOC_TEMPLATE_SAMPLE_HEADING_TOKENS):
+        failures.append({"id": "toc_contains_template_sample_heading"})
     if _contains_any(toc, _debug_forbidden_tokens()):
         failures.append({"id": "toc_contains_debug_text"})
 
     body = _body_region(parts["paragraphs"])
-    if re.search(r"第\s*48\s*页", body):
-        failures.append({"id": "body_contains_template_page_number_48", "token": "第 48 页", "region": "body"})
+    if re.search(r"第\s*48\s*页", body) or re.search(r"第\s*48\s*页", parts["header_footer_text"]):
+        failures.append({"id": "body_contains_template_page_number_48", "token": "第 48 页", "region": "body_or_header_footer"})
     body_forbidden = [
         token
         for token in _region_rules().get("body_forbidden", [])
@@ -172,7 +196,8 @@ def validate_output_text_file(docx_path: Path, output_report: Path | None = None
     if _contains_any(body, ("院（系）名称", "专业名称", "学生姓名", "指导教师")):
         failures.append({"id": "body_contains_cover_fields"})
 
-    report = {
+    report = attach_artifact_identity(
+        {
         "status": "failed" if failures else "pass",
         "candidate": str(docx_path),
         "failures": _dedupe_failures(failures),
@@ -181,7 +206,9 @@ def validate_output_text_file(docx_path: Path, output_report: Path | None = None
             "header_footer_chars": len(parts["header_footer_text"]),
             "paragraphs": len(parts["paragraphs"]),
         },
-    }
+        },
+        candidate_path=docx_path,
+    )
     _write_json_if_requested(report, output_report)
     return report
 
@@ -234,14 +261,21 @@ def _extract_docx_text(docx_path: Path) -> dict[str, Any]:
             for name in names
             if (name.startswith("word/header") or name.startswith("word/footer")) and name.endswith(".xml")
         ]
+        auxiliary_xml = [
+            package.read(name)
+            for name in ("word/footnotes.xml", "word/endnotes.xml", "word/comments.xml")
+            if name in names
+        ]
     paragraphs = _paragraph_texts(document_xml)
     document_text = "\n".join(paragraphs)
     header_footer_text = "\n".join("\n".join(_paragraph_texts(data)) for data in header_footer_xml)
+    auxiliary_text = "\n".join("\n".join(_paragraph_texts(data)) for data in auxiliary_xml)
     return {
         "paragraphs": paragraphs,
         "document_text": document_text,
         "header_footer_text": header_footer_text,
-        "full_text": document_text + "\n" + header_footer_text,
+        "auxiliary_text": auxiliary_text,
+        "full_text": document_text + "\n" + header_footer_text + "\n" + auxiliary_text,
     }
 
 

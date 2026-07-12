@@ -198,3 +198,38 @@ def test_run_harness_stops_on_failed_output_text(tmp_path):
     assert not (tmp_path / "harness" / "render_report.json").exists()
     status = json.loads((tmp_path / "harness" / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
+
+
+def test_run_harness_default_captures_render_smoke_failures(tmp_path, monkeypatch):
+    import scripts.run_harness as harness_script
+
+    candidate = tmp_path / "thesis.docx"
+    _write_docx(candidate, ["鍗曚綅浠ｇ爜 10006", "鍒嗙被鍙?TP273"])
+
+    def fake_render_smoke(*, candidate, out_dir, sample_mode, existing_pdf=None):
+        report = {
+            "status": "failed",
+            "candidate": str(candidate),
+            "sample_mode": sample_mode,
+            "failures": [
+                {"id": "cover_classification_split", "region": "cover", "token": "T P 2 7 3"},
+            ],
+            "artifacts": {"page_images": []},
+        }
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        (Path(out_dir) / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(harness_script, "validate_render_smoke", fake_render_smoke)
+
+    report = harness_script.run_harness(
+        candidate=candidate,
+        out_dir=tmp_path / "harness",
+        sample_mode="truncated",
+    )
+
+    assert report["status"] == "failed"
+    assert report["failed_stage"] == "render_smoke"
+    assert (tmp_path / "harness" / "render_smoke" / "report.json").is_file()
+    queue = json.loads((tmp_path / "harness" / "failure_queue.json").read_text(encoding="utf-8"))
+    assert queue["failures"][0]["reason"] == "cover_classification_split"

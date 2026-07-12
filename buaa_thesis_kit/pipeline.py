@@ -21,7 +21,9 @@ from buaa_thesis_kit.graph_nodes import (
     plan_minimal_fixes,
     visual_compare,
 )
-from buaa_thesis_kit.harness.validators import validate_model_file, validate_output_text_file
+from buaa_thesis_kit.harness.validators import run_role_quiz, validate_model_file, validate_output_text_file
+from buaa_thesis_kit.harness.artifact_identity import artifact_identity
+from buaa_thesis_kit.harness.progress import write_progress_artifacts
 from buaa_thesis_kit.models import EquationItem, ThesisModel
 from buaa_thesis_kit.pdf_extract import extract_pdf_model
 from buaa_thesis_kit.pdf_export import export_pdf_from_docx
@@ -34,6 +36,8 @@ from buaa_thesis_kit.validate import (
     write_report_md,
 )
 from buaa_thesis_kit.word_convert import convert_doc_to_docx
+from scripts.validate_instrumented_template import validate_instrumented_template, validate_instrumented_template_file
+from scripts.validate_render_smoke import validate_render_smoke
 
 
 DEFAULT_DOCX_TEMPLATE = (
@@ -100,6 +104,7 @@ def run_pipeline(
                 [],
                 [],
                 strict=strict,
+                sample_mode=sample_mode,
             )
 
         work_dir, remove_work = _prepare_work_dir(output_root, keep_work)
@@ -140,6 +145,8 @@ def run_pipeline(
             _ocr_report(model),
             _equation_report(model),
             strict=strict,
+            sample_mode=sample_mode,
+            template_path=state.template_path,
         )
     finally:
         if work_dir is not None and remove_work:
@@ -241,9 +248,30 @@ def _pipeline_nodes(source_suffix: str, image_dir: Path) -> dict[str, Any]:
         if state.outputs["word"] in {"pass", "needs_review"}:
             pdf_ok, pdf_message = export_pdf_from_docx(thesis_docx, thesis_pdf)
             if pdf_ok:
+                output_text_post_report = validate_output_text_file(
+                    thesis_docx,
+                    state.output_root / "harness" / "output_text_post_finalize_report.json",
+                )
+                _record_harness_stage(
+                    state,
+                    "output_text_post_finalize",
+                    "output_text_post_finalize_report.json",
+                    output_text_post_report,
+                )
+                if output_text_post_report["status"] != "pass":
+                    state.blocking_items.append(
+                        f"harness_output_text_post_finalize_failed: {_failure_ids(output_text_post_report)}"
+                    )
+                    state.outputs["pdf"] = "failed"
+                    return NodeResult(next_node="visual_compare")
                 state.outputs["pdf"] = "pass"
                 state.notes.append(pdf_message)
                 state.notes.extend(_write_template_diff_preview(thesis_pdf, state.output_root))
+                render_smoke_report = _run_render_smoke_gate(state, thesis_docx, thesis_pdf)
+                if render_smoke_report["status"] != "pass":
+                    state.manual_review.append(
+                        f"render_smoke_failed: {_failure_ids(render_smoke_report)}"
+                    )
             else:
                 state.outputs["pdf"] = "failed"
                 state.blocking_items.append(f"PDF export blocking: {pdf_message}")
@@ -529,6 +557,29 @@ def _record_harness_stage(state: GraphState, stage: str, report_name: str, repor
     (harness_dir / "status.json").write_text(json.dumps(status_report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _run_render_smoke_gate(state: GraphState, thesis_docx: Path, thesis_pdf: Path) -> dict[str, Any]:
+    try:
+        report = validate_render_smoke(
+            candidate=thesis_docx,
+            out_dir=state.output_root / "render_smoke",
+            existing_pdf=thesis_pdf,
+            sample_mode=state.sample_mode,
+        )
+    except Exception as exc:
+        report = {
+            "status": "failed",
+            "candidate": str(thesis_docx),
+            "pdf": str(thesis_pdf),
+            "sample_mode": state.sample_mode,
+            "failures": [{"id": "render_smoke_exception", "region": "render_smoke", "message": str(exc)}],
+        }
+        smoke_dir = state.output_root / "render_smoke"
+        smoke_dir.mkdir(parents=True, exist_ok=True)
+        (smoke_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.notes.append("Render smoke report written: " + str(state.output_root / "render_smoke" / "report.json"))
+    return report
+
+
 def _failure_ids(report: dict[str, Any]) -> str:
     failures = report.get("failures", [])
     ids = [str(item.get("id", item.get("rule", "unknown"))) for item in failures if isinstance(item, dict)]
@@ -562,12 +613,15 @@ def _write_template_diff_preview(thesis_pdf: Path, output_root: Path) -> list[st
 
 def _resolve_word_template(template_path: Path | None) -> Path:
     if template_path is not None:
-        return _instrument_if_official_raw(template_path)
+        return _require_valid_instrumented_template(_instrument_if_official_raw(template_path))
     if DEFAULT_DOCX_TEMPLATE.exists():
-        return DEFAULT_DOCX_TEMPLATE
+        return _require_valid_instrumented_template(DEFAULT_DOCX_TEMPLATE)
     if DEFAULT_OFFICIAL_TEMPLATE.exists():
-        return _instrument_if_official_raw(DEFAULT_OFFICIAL_TEMPLATE)
-    return LEGACY_DOCX_TEMPLATE
+        return _require_valid_instrumented_template(_instrument_if_official_raw(DEFAULT_OFFICIAL_TEMPLATE))
+    raise FileNotFoundError(
+        "Instrumented official template is missing; expected "
+        f"{DEFAULT_DOCX_TEMPLATE}"
+    )
 
 
 def _instrument_if_official_raw(template_path: Path) -> Path:
@@ -580,6 +634,20 @@ def _instrument_if_official_raw(template_path: Path) -> Path:
         instrument_official_template(candidate, DEFAULT_DOCX_TEMPLATE)
         return DEFAULT_DOCX_TEMPLATE
     return candidate
+
+
+def _require_valid_instrumented_template(template_path: Path) -> Path:
+    report = validate_instrumented_template_file(template_path)
+    if report.get("status") != "pass":
+        failures = report.get("failures", [])
+        ids = [
+            str(item.get("id", "unknown"))
+            for item in failures
+            if isinstance(item, dict)
+        ]
+        detail = ", ".join(ids) if ids else "unknown"
+        raise ValueError(f"Instrumented template validation failed: {detail}")
+    return Path(template_path)
 
 
 def _is_in_place_template(template_path: Path | None) -> bool:
@@ -731,6 +799,8 @@ def _finalize_report(
     ocr_ledger: list[dict[str, Any]],
     equation_ledger: list[dict[str, Any]],
     strict: bool = False,
+    sample_mode: str = "full",
+    template_path: Path | None = None,
 ) -> dict[str, Any]:
     report_path = output_root / "report.md"
     initial_blocking = _strict_blocking_items(blocking_items, manual_review, outputs, strict=strict)
@@ -746,6 +816,7 @@ def _finalize_report(
         ocr_ledger=ocr_ledger,
         equation_ledger=equation_ledger,
     )
+    _attach_final_artifact_identity(report, output_root)
     write_report_md(report, report_path)
 
     clean_ok, clean_messages = validate_clean_output(output_root)
@@ -771,8 +842,91 @@ def _finalize_report(
         ocr_ledger=ocr_ledger,
         equation_ledger=equation_ledger,
     )
+    _attach_final_artifact_identity(final_report, output_root)
     write_report_md(final_report, report_path)
+    _write_harness_progress(output_root, source=source, sample_mode=sample_mode, template_path=template_path)
     return final_report
+
+
+def _attach_final_artifact_identity(report: dict[str, Any], output_root: Path) -> None:
+    thesis_docx = output_root / "thesis.docx"
+    if not thesis_docx.exists() or not thesis_docx.is_file():
+        return
+    model_json = output_root / "model.json"
+    report["artifact_identity"] = artifact_identity(
+        candidate_path=thesis_docx,
+        source_model_path=model_json if model_json.exists() else None,
+    )
+
+
+def _write_harness_progress(
+    output_root: Path,
+    *,
+    source: Path,
+    sample_mode: str,
+    template_path: Path | None,
+) -> None:
+    thesis_docx = output_root / "thesis.docx"
+    model_json = output_root / "model.json"
+    harness_dir = output_root / "harness"
+    _ensure_pipeline_harness_reports(harness_dir, template_path=template_path)
+    write_progress_artifacts(
+        harness_dir,
+        candidate_path=thesis_docx if thesis_docx.exists() else None,
+        model_path=model_json if model_json.exists() else None,
+        template_path=template_path,
+        sample_mode=sample_mode,
+        commands=[
+            "python scripts/run_pipeline.py "
+            + str(source)
+            + " --out "
+            + str(output_root)
+            + " --sample-mode "
+            + sample_mode
+        ],
+        render_smoke_dir=output_root / "render_smoke",
+    )
+
+
+def _ensure_pipeline_harness_reports(harness_dir: Path, *, template_path: Path | None) -> None:
+    harness_dir.mkdir(parents=True, exist_ok=True)
+    role_report = harness_dir / "role_quiz_report.json"
+    if not role_report.exists():
+        run_role_quiz(role_report)
+
+    template_report = harness_dir / "instrumented_template_report.json"
+    if not template_report.exists():
+        if template_path is not None and Path(template_path).exists():
+            validate_instrumented_template(Path(template_path), template_report)
+        else:
+            template_report.write_text(
+                json.dumps(
+                    {
+                        "status": "skipped",
+                        "template": str(template_path) if template_path is not None else None,
+                        "failures": [],
+                        "reason": "template_path_not_available",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+    bad_fixture_report = harness_dir / "bad_fixture_regression_report.json"
+    if not bad_fixture_report.exists():
+        bad_fixture_report.write_text(
+            json.dumps(
+                {
+                    "status": "skipped",
+                    "failures": [],
+                    "reason": "not_a_bad_fixture_regression_run",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
 
 def _strict_blocking_items(

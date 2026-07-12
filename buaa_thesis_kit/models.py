@@ -16,6 +16,11 @@ class SourceEvidence:
     page_hint: int | None = None
     confidence: float = 0.0
     requires_review: bool = True
+    source_type: str = ""
+    source_region: str = ""
+    evidence_text: str = ""
+    extractor_rule: str = ""
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +39,9 @@ class Metadata:
     classification: str = ""
     unit_code: str = "10006"
     evidence: dict[str, SourceEvidence] = field(default_factory=dict)
+    candidates: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    resolution: dict[str, dict[str, Any]] = field(default_factory=dict)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -81,7 +89,13 @@ class EquationItem:
     omml: str = ""
     preview_path: str = ""
     object_path: str = ""
+    native_path: str = ""
+    native_format: str = ""
+    native_stream_name: str = ""
+    native_sha256: str = ""
+    native_size: int = 0
     object_xml: str = ""
+    region_bbox: list[float] = field(default_factory=list)
     source: SourceEvidence | None = None
     requires_review: bool = True
 
@@ -111,6 +125,7 @@ class OcrLedgerItem:
 class ThesisModel:
     metadata: Metadata = field(default_factory=Metadata)
     front_matter: dict[str, Any] = field(default_factory=dict)
+    task_book: dict[str, Any] = field(default_factory=dict)
     sections: list[ContentBlock] = field(default_factory=list)
     figures: list[AssetItem] = field(default_factory=list)
     tables: list[ContentBlock] = field(default_factory=list)
@@ -125,6 +140,7 @@ class ThesisModel:
         return {
             "metadata": self.metadata.to_dict(),
             "front_matter": copy.deepcopy(self.front_matter),
+            "task_book": copy.deepcopy(self.task_book),
             "sections": [x.to_dict() for x in self.sections],
             "figures": [x.to_dict() for x in self.figures],
             "tables": [x.to_dict() for x in self.tables],

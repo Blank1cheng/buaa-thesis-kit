@@ -13,10 +13,14 @@ generated/
 *.log
 
 # Generated from the official school Word template; regenerate locally with scripts.
-templates/official/
+templates/official/*
+!templates/official/
+!templates/official/template_regions.yaml
 templates/render_fragments/
+templates/external/BUAAthesis/
 
 .venv/
+.venv-*/
 venv/
 env/
 

@@ -1,196 +1,209 @@
 # BUAA Thesis Kit
 
-北航本科毕业设计（论文）格式规范化工具包。目标是把 `.doc`、`.docx` 或 `.pdf`
-论文输入，经过可诊断、可回环的 Agent Graph 流水线，输出符合交付约束的 Word、PDF、
-TeX 和图片目录。
+北航本科与硕士论文的 Agent-first 规范化工作流。输入 DOCX 或 PDF，先建立带证据的
+`model.json`，再使用 BUAAthesis 原生模板生成 LaTeX/PDF。Agent 负责提取、公式判读和逐页视觉
+复核；Harness 独立判断是否可以交付。
 
-## 核心策略
+主入口是 [`skills/normalizing-buaa-theses/SKILL.md`](skills/normalizing-buaa-theses/SKILL.md)。
+本地脚本是可选的确定性工具，不替代 Agent 取证，也不能覆盖 Harness 失败。
 
-当前流水线采用 `official-template-in-place + repair-first`：
+## 当前架构
 
-1. 官方 Word 模板是唯一版式来源：先把 `附件1-北航本科论文模板.doc` 转成 `templates/official/buaa_undergraduate_template.docx`，再 instrument 成 `templates/official/buaa_undergraduate_template_instrumented.docx`。
-2. 优先复制并修复源 Word，尽量保留原文档版面、正文结构、图片、表格和公式对象。
-3. 对 PDF 输入，先抽取可编辑文本、封面元数据和结构边界，再把 thesis model 原位填入官方 instrumented 模板；不得把整页截图作为最终 Word 正文。
-4. 封面、书脊、任务书、声明、摘要、目录和正文 section 不再靠代码手写版式，必须继承官方模板的 OOXML、section、页眉页脚、样式、编号和 media。
-5. 对缺失的规范项生成类型化 finding，例如 `missing_spine`、`spine_metadata_missing`。
-6. 修复失败或视觉/合规判断未收敛时，通过 graph 回环重试；超过上限后失败退出。
-7. 过程文件默认写入临时目录并删除，最终公开目录只保留验收产物。
+```text
+DOCX/PDF
+  -> source identity (absolute path + size + SHA256)
+  -> evidence-backed model.json
+  -> extraction Harness
+  -> native equation workflow
+  -> BUAAthesis undergraduate/master renderer
+  -> XeLaTeX PDF
+  -> Agent page-by-page visual review
+  -> Harness profiles
+  -> flat public output/
+```
 
-## 官方模板原位编辑
+- DOCX 输入优先读取原始 OOXML 中的 `w:t`、表格、文本框、OMML、OLE 和 relationships，
+  不先转 PDF 再抽取。
+- PDF 输入先读取字符、字体和 bbox，再结合页面截图核验。无法由独立证据消歧的公式或字段保持
+  `needs_review`，不得猜测。
+- PDF 正确性使用 BUAAthesis 的原生封面和前置页实现。Word renderer 仅作为 legacy/experimental
+  编辑路径，不是当前 PDF 主流程。
+- 本科使用 `undergraduate`，硕士使用 `master`。培养层次无法确认时停止套用模板。
 
-第一阶段只准备并标记官方母模板，不拆页、不重建前置页：
+## 环境
 
 ```powershell
-python scripts/prepare_official_template.py "D:\Work\研二下\Skill\格式要求\附件1-北航本科论文模板.doc" --out templates\official\buaa_undergraduate_template.docx --render-check-dir output\template_render_check
-python scripts/instrument_official_template.py --template templates\official\buaa_undergraduate_template.docx --out templates\official\buaa_undergraduate_template_instrumented.docx
-python scripts/extract_style_map.py --template templates\official\buaa_undergraduate_template.docx --out templates\official\style_map.json
+python -m pip install -r requirements.txt
 ```
 
-`prepare_official_template.py` 优先使用 Word COM 转换 legacy `.doc`，并渲染 `output/template_render_check/page_001.png` 等检查图。`instrument_official_template.py` 只在官方 DOCX 内原位插入 placeholder/bookmark 语义标记，不复制页面、不拆 fragment、不改变 styles、numbering、header/footer、section、TOC field、page number fields、media、shapes 或 textboxes。
+PDF 编译需要 XeLaTeX/latexmk。当前锁定模板位于
+`templates/latex/buaa/bhosc/`，来源为
+[BHOSC/BUAAthesis](https://github.com/BHOSC/BUAAthesis)。最终 `report.md` 会记录 class SHA、
+class 版本、TeX Live/XeTeX/latexmk 版本、字体声明和最终 PDF 字体对象。
 
-每次生成论文时，主装配逻辑执行：
+## 运行主流程
+
+过程文件写入 `tmp/` 或其他临时目录，不直接写入公开 `output/`。
+
+```powershell
+python scripts/run_latex_pipeline.py thesis.docx `
+  --buaa-template-path templates\latex\buaa\bhosc `
+  --degree-type undergraduate `
+  --out tmp\thesis_run
+```
+
+PDF 输入使用同一入口：
+
+```powershell
+python scripts/run_latex_pipeline.py thesis.pdf `
+  --buaa-template-path templates\latex\buaa\bhosc `
+  --degree-type undergraduate `
+  --out tmp\thesis_run_pdf
+```
+
+主 run 会输出 extraction reports、G20-G28 gate board、稳定失败队列、候选 TeX 和编译 PDF。
+`G27=needs_review` 表示语义或公式仍未闭环，不能称为最终交付。
+
+## 公式复核
+
+优先级为 `OMML/MTEF > verified text > Agent visual > optional external OCR`。每个公式均绑定稳定
+ID、源 SHA、候选、来源裁剪、独立渲染和文件 SHA。Agent 完成逐符号比较后，可提交哈希绑定的
+review ledger：
+
+```powershell
+python scripts/run_latex_pipeline.py thesis.docx `
+  --buaa-template-path templates\latex\buaa\bhosc `
+  --degree-type undergraduate `
+  --out tmp\thesis_reviewed `
+  --equation-review tmp\equation_review.json
+```
+
+修正候选必须记录 `correction_reason` 和 `corrected_latex_sha256`，并对修正后的候选重新执行
+安全检查、最小 XeLaTeX 编译和来源裁剪视觉比较，更新 artifact hashes。公式截图只允许作为
+审计证据，不得作为最终正文公式。
+
+## 逐页视觉复核
+
+将最终候选 PDF 的每一页分别渲染为真实 raster screenshot。Agent 检查封面、书脊、任务书、
+声明、中英文摘要、目录、章首页、图表公式页、致谢/附录和参考文献，并写入：
 
 ```text
-copy templates/official/buaa_undergraduate_template_instrumented.docx -> output/thesis.docx
-replace cover/spine/task/declaration/abstract placeholders in place
-delete only the official sample body between {{BODY_START}} and {{BODY_END}}
-insert thesis model body blocks into the original body section
-update Word fields and export output/thesis.pdf
+output/image/visual_review.json
 ```
 
-`scripts/extract_render_fragments.py` 只允许作为调试工具保留，不能参与主装配路径。最终 `output/template_inheritance_report.json` 必须证明 `thesis.docx` 是 instrumented 官方模板的副本，且 styles、numbering、headers、footers、TOC field 和 page number fields 没有被破坏。
+清单必须绑定 `pdf_sha256` 和 `pdf_page_count`；每页一条独立记录，包含 `region`、`pages`、
+`screenshot`、`bbox`、`status`、`checks` 和 `failure_ids`。任一 non-pass H-ID 必须同时存在于
+active `output/failure_queue.json`。
 
-## Graph 节点
+## 兼容审计与主流程门禁
 
-```text
-ingest
-  -> profile_reference
-  -> inspect_source
-  -> diagnose_compliance
-  -> plan_minimal_fixes
-  -> apply_word_fixes
-  -> export_pdf
-  -> visual_compare
-  -> decide
-       pass -> finalize_output
-       fail -> revise_plan -> apply_word_fixes
+LaTeX-first 不会跳过既有的内容完整性检查。Agent 和 Harness 必须保留以下审计证据，并把
+未闭环项映射到稳定 H-ID；这些记录不能被渲染器的成功退出码覆盖：
+
+- `Editability Audit`：DOCX 输入检查正文仍是可编辑文本；PDF 输入提供最佳努力 DOCX 时，
+  `page_screenshot_drawing_count` 必须为 `0`，且 `body_snippet_hits` 必须证明源正文片段存在。
+  兼容 Word 流程的最终检查使用 `scripts/run_pipeline.py --strict`；任何人工复核项必须产生
+  `strict_finalization_failed`。LaTeX 主流程采用等价的 required G/V gates。
+- `OCR Ledger`：无文本层或扫描页记录 `needs_ocr`；只有 OCR 文字及页面证据一致时才记录
+  `ocr_text_extracted`。OCR 页面图只能进入证据目录，不能伪装成可编辑正文。
+- `Equation Ledger`：记录 `editable_omml`、`editable_ole_object`、可信原生 LaTeX 及审核哈希。
+  PDF 的 safe linear 候选即使能够完整解析 `frac`、`sqrt`、`sum`、`int`、Greek 符号以及
+  `bmatrix`、`pmatrix`、`cases`，仍只能保持 `latex_needs_review` 或
+  `preview_image_needs_review`；PDF 文本层本身不是原生公式证据，不得自动接受或猜测。
+- `PDF cover geometry`：视觉审计记录 `cover_title_y`、`field_rows_y` 和 `date_y`，并与对应
+  本科或硕士 BUAAthesis 参考页比较。越界或层次错误必须失败。
+- `figure/table validation`：标题、资源、编号和正文引用必须一致；
+  `figure_caption_without_asset`、`duplicate_figure_number` 等错误属于阻断项。
+
+## 最终打包
+
+只有公式复核、逐页复核和 required gates 已闭环时，才把临时 run 收敛到公开目录：
+
+```powershell
+python scripts/package_agent_delivery.py thesis.docx `
+  --run tmp\thesis_reviewed `
+  --output output `
+  --visual-manifest tmp\visual_review\visual_review.json `
+  --template templates\latex\buaa\bhosc `
+  --replace `
+  --out tmp\package_report.json
 ```
 
-其中 `书脊` 是强制合规对象。源文档缺少书脊时，graph 会记录 `missing_spine`，
-规划 `insert_spine`，在 Word 副本中插入可打印书脊页，并在 `report.md` 中记录修复和
-仍需人工复核的元数据字段。
+PDF-only 输入还必须通过 `--editable-docx` 提供最佳努力的语义可编辑 DOCX。无法恢复语义结构时，
+结果保持 `needs_review`；禁止把整页截图伪装成可编辑 Word。
 
-## 输出约束
+打包器会：
 
-最终输出目录固定为：
+1. flatten/inline 所有生成的 `data/*.tex`，保留 `\include` 的分页语义；
+2. 把正文图片重写并复制到 `output/image/`；
+3. 验证 run 中 `model.source`、`report.source_identity` 和 extraction source report 均与候选
+   绝对路径、size 和 SHA256 一致；不允许覆盖身份后重新贴标；
+4. 从扁平 `thesis.tex` 全新编译，并与已审 PDF 做逐页像素比较；
+5. 验证每张视觉截图是其声明 PDF 页和 bbox 的真实 raster；
+6. 规范化 `failure_queue.json`，最后写入 artifact manifest digest；
+7. 只保留输出契约允许的文件。
+
+## 输出契约
 
 ```text
 output/
   thesis.docx
   thesis.pdf
   thesis.tex
-  report.md
   model.json
-  harness/
-  template_inheritance_report.json
-  template_diff/
+  report.md
+  failure_queue.json
   image/
+    visual_review.json
+    page_*.png
+    <final body figures>
 ```
 
-`thesis.docx` 是权威版面来源；`thesis.pdf` 从 `thesis.docx` 导出；`thesis.tex`
-是辅助结构化备份，用于复核和恢复，不作为主输出。
+`thesis.pdf` 是规范化主交付。对于 DOCX 输入，`thesis.docx` 是保留语义可编辑性的源文档副本；
+它不代表 LaTeX PDF 的分页。过程日志、解包目录、单公式编译文件和缓存不得进入 `output/`。
 
-PDF 输入的 `thesis.docx` 仍必须是可编辑 Word：封面、书脊、任务书和正文由官方模板原位替换得到。
-页面截图只可作为 OCR 或人工复核证据，不进入最终 Word 正文。
+## 独立验收
 
-## 结构化抽取
-
-PDF 输入优先使用 layout-aware 文本抽取：从 `page.get_text("dict")` 读取每行文本的页码、
-坐标、字体和字号，再解析为 thesis model。页眉、页脚、单独页码和目录项不会进入 BODY；
-`摘    要`、`Abstract`、`关键词`、`Key Words` 进入 `front_matter`；目录由 Word/PDF
-渲染链路重建，不从源 PDF 复制成正文。疑似 Word 域代码残留，例如 `MERGEFORMAT`、`公式章`
-和 `下一章`，会转为公式复核项，不作为普通正文输出。调试时可用 `--keep-work` 查看临时
-`pdf-structured-extraction.md`，最终 `output/` 不保留该过程文件。
-
-## 使用方法
+先在临时目录使用锁定模板从 `output/thesis.tex` 全新编译，确认页数一致，并对已审 PDF 做逐页
+pixel comparison。随后运行两个 profile：
 
 ```powershell
-python scripts/run_pipeline.py input.docx --out output
-python scripts/run_pipeline.py input.doc --out output
-python scripts/run_pipeline.py input.pdf --out output
-python scripts/run_pipeline.py input.docx --out output --keep-work
-python scripts/run_pipeline.py input.pdf --out output --strict
-python scripts/run_pipeline.py input.pdf --out output --sample-mode truncated
+python scripts/validate_agent_delivery.py `
+  --candidate thesis.docx `
+  --profile latex_pdf `
+  --gate-board tmp\thesis_reviewed\harness\gate_board.json `
+  --output output `
+  --out tmp\delivery_latex_pdf.json
+
+python scripts/validate_agent_delivery.py `
+  --candidate thesis.docx `
+  --profile agent_visual_review `
+  --gate-board tmp\visual_gate_board.json `
+  --output output `
+  --out tmp\delivery_visual.json
 ```
 
-`--keep-work` 只用于调试，会保留与 `output/` 相邻的过程目录；默认运行会删除过程文件。
-`--strict` 用于最终提交门禁：只要仍存在人工复核项或 `needs_review` 输出，就会生成
-`strict_finalization_failed` 并返回非零退出码。
-`--sample-mode truncated` 只用于调试样本文档：不把正文缺章、目录只包含已有标题、参考文献不完整当成阻塞失败，但仍检查 front matter 渲染、调试文本泄漏、本地路径泄漏和可编辑性。
+只有两个报告均为 `pass`、`failures=[]`，且 G20-G28、V00-V02 所有 required gates 均为
+`pass`，才能声明最终交付。
 
-## 可编辑性验收
-
-`output/report.md` 中的 `Editability Audit` 是判断 `thesis.docx` 是否可编辑的机器证据。
-PDF 输入时，`page_screenshot_drawing_count` 必须为 `0`；页面截图只能作为 OCR 或人工复核证据，
-不能进入最终 Word 正文。`editable_characters`、`paragraph_count`、`table_count`、`drawing_count`
-和 `omml_equation_count` 用于辅助判断正文、表格、图像和公式是否以可编辑 Word 结构输出。`body_snippet_count`
-和 `body_snippet_hits` 记录从源正文抽样出的文本片段是否能在最终 Word 中以可编辑文本命中；
-若源正文片段完全未命中，说明正文可能被图片替代，必须阻断。若模型中已有可转换的 OMML 公式，
-`expected_omml_equation_count` 必须小于等于最终 DOCX 包内真实 `m:oMath`/`m:oMathPara` 对象数量，
-否则视为公式被文本、截图或占位符替代并阻断。
-
-## 封面几何验收
-
-`output/report.md` 中的 `PDF cover geometry` 记录封面元素坐标证据，至少包含
-`cover_title_y`、`thesis_title_y`、`field_rows_y` 和 `date_y`。这些值用于检查封面标题、
-论文题目、学院/专业/姓名/导师字段行和日期是否落在参考模板区间内；若出现
-`pdf_cover_geometry` 阻断项，说明封面元素位置已经偏离模板，不得作为最终合格 PDF。
-
-## OCR 证据账本
-
-`output/report.md` 中的 `OCR Ledger` 记录扫描页和无可提取文本页。每条 ledger 至少包含页码、
-`needs_ocr` 状态、证据图片、可提取字符数、置信度和是否需要复核。证据图片会复制到
-`output/image/`，例如 `pdf-page-001.png`，但不会作为整页截图插入最终 Word 正文。
-当本机 OCR 引擎返回文本时，ledger 状态为 `ocr_text_extracted`，识别文本会进入可编辑
-Word/TeX 正文，证据图仍保留在 `output/image/` 供复核。
-默认 OCR hook 使用 `pytesseract`/`Pillow` 和本机 Tesseract 可执行程序；缺少语言包或
-可执行程序时不会阻断流水线，而是继续输出 `needs_ocr`。
-
-## 公式证据账本
-
-`output/report.md` 中的 `Equation Ledger` 记录每个公式在最终 Word 中的可编辑状态。`editable_omml`
-表示可编辑 Word 公式，`editable_ole_object` 表示保留了可编辑 OLE/MathType 对象，`trusted_latex`
-表示可由可信 LaTeX 结构恢复。PDF 文本层中的 safe linear equation，以及受支持的 `frac`/`sqrt`、
-`sum`/`int`、Greek、`bmatrix`/`pmatrix`/`cases`
-宏，只有在解析器能够完整转换为 OMML 时才标记为 `editable_omml`；`latex_needs_review` 表示公式样式文本已经进入账本但仍需要复核并
-转换为可编辑 Word 公式。`preview_image_needs_review` 和 `manual_transcription_required` 不能静默通过，
-必须由 agent 或人工转写成可编辑公式后再进入最终验收。`editable_omml` 不是账本文字声明，
-最终验收会打开 DOCX 包检查真实 OMML 对象数量。
-
-## 图表一致性验收
-
-流水线会执行 `figure/table validation`：正文中的图题、表题和正文引用必须能匹配到对应图像或表格资产。
-`figure_caption_without_asset`、`table_caption_without_asset`、`figure_reference_without_asset`
-和 `table_reference_without_asset` 是阻断项，说明模板化输出可能漏图、漏表或错位。`duplicate_figure_number`
-和 `duplicate_table_number` 也是阻断项；同一图题下的多个图片资产按组合图处理，不视为重复编号。
-DOCX 输入会尝试把图片后最近的 `图/Fig.` 图题绑定到对应图片资产；无题注图片或无标题表格进入人工复核。
-
-## 模板前置结构规则
-
-最终 `thesis.docx` 必须由统一 Word 模板生成固定前置结构：封面、书脊、任务书、声明、中文摘要、英文摘要、目录、正文、致谢、参考文献、附录。PDF 输入不得把源目录复制为正文；目录必须由 Word TOC 域生成，并在导出 PDF 前通过 Word COM 更新。正文渲染时必须过滤已进入前置结构的任务书、声明、摘要、目录和封面元数据，避免重复出现在正文里。
-
-前置页必须由官方 instrumented 模板原位替换，不再由 `frontmatter_render` 或 `front_matter_renderer.py` 手写生成主输出。封面、书脊、任务书、声明、中文摘要、英文摘要和目录的几何结构、图片、文本框、页眉页脚、页码域和 section 均来自官方模板；代码只替换 placeholder 内容。任务书抽取不全时，缺失内容只在 `report.md` 标记，不得把“需人工复核”等说明写入 `thesis.docx`。
-
-中文摘要、英文摘要和目录使用独立 section：摘要/目录页脚为罗马页码，正文 section 从 `第 1 页` 重新编号。中文摘要页只包含中文题名、学生/指导老师、`摘    要`、中文摘要正文和 `关键词：`；英文题名、`Author:`、`Tutor:` 只能进入英文摘要页。
-
-章节结构优先使用源文档的可编辑标题；当 DOCX 自动编号没有出现在段落文本中时，流水线可根据后续 `1.1`、`2.1` 等小节号恢复一级标题编号。类似 `第一章 绪论。本章介绍...` 的章末总结句应作为正文段落保留，不得误判成新的一级标题或触发分页。
-
-## 最终正文禁入项
-
-最终 Word 正文不得出现过程调试文本、本地资产路径或图片/公式占位痕迹，例如 `[Figure inserted]`、`[Figure requires review]`、`[Equation preview inserted]`、`.worktrees`、`D:\`、`.wmf`、`.emf`、`.png`。图片、OCR 和公式的不确定项必须进入 `output/report.md` 的 ledger 与 `output/image/` 证据目录，而不是混入正文。
-
-参考文献标题必须使用 `参考文献`，不得输出独立英文标题 `References`。公式抽取失败时不能把拆碎的线性 token 连续写成普通正文；可信 OMML/OLE/可转换 LaTeX 才能进入可编辑公式，否则保留为复核项。
-
-## 报告状态
-
-- `pass`：必需输出存在，且没有阻断项或人工复核项。
-- `needs_review`：输出存在，但公式、图片、参考文献、元数据、PDF 版面或 OCR 仍需复核。
-- `failed`：提取、Word 修复、TeX 生成或 PDF 导出出现阻断失败。
-
-## 验证
+## 测试
 
 ```powershell
-python -m pytest tests -q
-python scripts/run_harness.py --candidate tests\fixtures\bad_outputs\thesis6.docx --model-json tests\fixtures\expected_model_truncated.json --expected-model tests\fixtures\expected_model_truncated.json --sample-mode truncated --out output\harness
-python scripts/validate_output_text.py tests\fixtures\reference_good.docx --out output\harness\reference_good_output_text_report.json
-python scripts/run_pipeline.py "D:\Work\研二下\Skill\论文\崔润昊毕设打印版.docx" --out output
-python scripts/run_pipeline.py "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --out output
-python scripts/validate_template_inheritance.py --base templates\official\buaa_undergraduate_template_instrumented.docx --candidate output\thesis.docx --out output\template_inheritance_report.json --word-com-finalized
-python scripts/validate_front_matter.py "C:\Users\admin\Desktop\删减毕设.docx" output\thesis.docx --sample-mode truncated
-python scripts/validate_frontmatter_render.py --reference "C:\Users\admin\Desktop\崔润昊毕设打印版.pdf" --candidate output\thesis.docx --pages cover,spine,taskbook,declaration,abstract_cn,abstract_en,toc --sample-mode truncated --out output\template_diff
-python scripts/validate_layout_consistency.py --reference "C:\Users\admin\Desktop\删减毕设.docx" --candidate output\thesis.docx --sample-mode truncated --out output\layout_consistency_report.json
-python scripts/capture_frontmatter_template.py "C:\path\to\reference.docx" --out templates\front_matter_captured
+pytest tests -q
 ```
 
-真实样例中的公式和部分图片会被标记为 `needs_review`，这是预期行为：系统不会把不确定的
-公式转换、图片位置、PDF 文本顺序或 OCR 缺口静默当作合格结果。
+默认测试排除 `legacy_word` marker。坏样本 fixture 必须继续失败，不能通过放宽 validator 或修改
+规则把错误变成通过。
+
+## 仓库结构
+
+```text
+skills/normalizing-buaa-theses/  Agent 工作流、规则和 evals
+buaa_thesis_kit/extract/         DOCX/PDF 结构化提取与 extraction Harness
+buaa_thesis_kit/equations/       原生公式识别、转换、编译与验证
+buaa_thesis_kit/latex/           BUAAthesis 渲染和版式 Harness
+buaa_thesis_kit/harness/         独立 profiles、失败队列和交付验证
+scripts/                         可选 CLI 工具
+templates/latex/buaa/bhosc/      锁定的 BUAAthesis 运行依赖
+tests/                           单元、回归、坏样本和 Skill 合约测试
+```

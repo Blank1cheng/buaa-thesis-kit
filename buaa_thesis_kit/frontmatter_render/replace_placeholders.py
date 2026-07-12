@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -95,6 +96,10 @@ def _replace_placeholders_in_container(container, replacements: dict[str, str]) 
     replaced = _replace_text(original, replacements)
     if replaced == original:
         return False
+    classification = replacements.get("{{CLASSIFICATION}}", "")
+    if "{{CLASSIFICATION}}" in original and classification:
+        if _replace_classification_value_run(container, replaced, classification):
+            return True
     first = text_nodes[0]
     first.text = replaced
     for node in text_nodes[1:]:
@@ -115,3 +120,39 @@ def _placeholder_key(key: str) -> str:
         return text
     return "{{" + text.strip("{}") + "}}"
 
+
+def _replace_classification_value_run(container, replaced: str, value: str) -> bool:
+    if value not in replaced:
+        return False
+    runs = list(container.findall("./w:r", NS))
+    if not runs:
+        return False
+    prefix, suffix = replaced.split(value, 1)
+    base_rpr = runs[0].find("w:rPr", NS)
+    for run in runs:
+        container.remove(run)
+    container.append(_run_with_text(prefix, base_rpr, preserve=prefix.endswith(" ")))
+    value_rpr = deepcopy(base_rpr) if base_rpr is not None else ET.Element(f"{{{W_NS}}}rPr")
+    _force_zero_character_spacing(value_rpr)
+    container.append(_run_with_text(value, value_rpr, preserve=False))
+    if suffix:
+        container.append(_run_with_text(suffix, base_rpr, preserve=suffix.startswith(" ") or suffix.endswith(" ")))
+    return True
+
+
+def _run_with_text(text: str, rpr, *, preserve: bool):
+    run = ET.Element(f"{{{W_NS}}}r")
+    if rpr is not None:
+        run.append(deepcopy(rpr))
+    text_node = ET.SubElement(run, f"{{{W_NS}}}t")
+    if preserve:
+        text_node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    text_node.text = text
+    return run
+
+
+def _force_zero_character_spacing(rpr) -> None:
+    spacing = rpr.find("w:spacing", NS)
+    if spacing is None:
+        spacing = ET.SubElement(rpr, f"{{{W_NS}}}spacing")
+    spacing.set(f"{{{W_NS}}}val", "0")

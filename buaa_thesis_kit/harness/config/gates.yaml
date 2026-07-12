@@ -1,0 +1,117 @@
+gates:
+  - id: G00
+    name: artifact_identity
+    required: true
+    phase: P0
+  - id: G01
+    name: role_quiz
+    required: true
+    phase: P0
+  - id: G02
+    name: model_validation
+    required: true
+    phase: P0
+  - id: G03
+    name: instrumented_template
+    required: true
+    phase: P0
+  - id: G04
+    name: bad_fixture_regression
+    required: true
+    phase: P0
+  - id: G05
+    name: pre_finalize_output_text
+    required: true
+    phase: P1
+  - id: G06
+    name: post_finalize_output_text
+    required: true
+    phase: P1
+  - id: G07
+    name: template_inheritance
+    required: true
+    phase: P2
+  - id: G08
+    name: render_smoke
+    required: false
+    phase: P3
+  - id: G09
+    name: visual_alignment
+    required: false
+    phase: P3
+  - id: G10
+    name: semantic_completeness
+    required: false
+    phase: P4
+  - id: G11
+    name: figures_equations
+    required: false
+    phase: P4
+  - id: G20
+    name: latex_template_inspection
+    required: true
+    phase: latex
+  - id: G21
+    name: latex_model_validation
+    required: true
+    phase: latex
+  - id: G22
+    name: latex_render
+    required: true
+    phase: latex
+  - id: G23
+    name: latex_compile
+    required: true
+    phase: latex
+  - id: G24
+    name: latex_pdf_smoke
+    required: true
+    phase: latex
+  - id: G25
+    name: latex_metadata_completeness
+    required: true
+    phase: latex
+  - id: G26
+    name: latex_chunk_traceability
+    required: false
+    phase: latex
+  - id: E00
+    name: source_identity
+    required: true
+    phase: extraction
+  - id: E01
+    name: text_extraction
+    required: true
+    phase: extraction
+  - id: E02
+    name: metadata_extraction
+    required: true
+    phase: extraction
+  - id: E03
+    name: abstract_extraction
+    required: true
+    phase: extraction
+  - id: E04
+    name: body_structure_extraction
+    required: true
+    phase: extraction
+  - id: E05
+    name: figure_extraction
+    required: false
+    phase: extraction
+  - id: E06
+    name: equation_extraction
+    required: false
+    phase: extraction
+  - id: E07
+    name: reference_extraction
+    required: false
+    phase: extraction
+  - id: E08
+    name: chunk_traceability
+    required: false
+    phase: extraction
+  - id: E09
+    name: forbidden_content_check
+    required: true
+    phase: extraction

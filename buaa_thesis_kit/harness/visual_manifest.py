@@ -36,6 +36,7 @@ REVIEW_FIELDS = {
     "failure_ids",
 }
 SCREENSHOT_SUFFIXES = {".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+SCREENSHOT_RENDER_SCALES = (1.0, 1.5, 2.0, 3.0)
 
 
 def _read_json(path: Path) -> tuple[Any | None, str | None]:
@@ -106,6 +107,46 @@ def _image_is_decodable(path: Path) -> bool:
         Image.DecompressionBombError,
     ):
         return False
+
+
+def _screenshot_matches_pdf_region(
+    pdf_path: Path,
+    *,
+    page_number: int,
+    bbox: list[float],
+    screenshot_path: Path,
+) -> bool:
+    try:
+        with Image.open(screenshot_path) as image:
+            screenshot = image.convert("RGB")
+            screenshot_size = screenshot.size
+            screenshot_pixels = screenshot.tobytes()
+        clip = fitz.Rect(*bbox)
+        with fitz.open(pdf_path) as document:
+            page = document[page_number - 1]
+            for scale in SCREENSHOT_RENDER_SCALES:
+                pixmap = page.get_pixmap(
+                    matrix=fitz.Matrix(scale, scale),
+                    clip=clip,
+                    alpha=False,
+                )
+                if (
+                    (pixmap.width, pixmap.height) == screenshot_size
+                    and pixmap.n == 3
+                    and pixmap.samples == screenshot_pixels
+                ):
+                    return True
+    except (
+        IndexError,
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+    ):
+        return False
+    return False
 
 
 def _bbox_shape_valid(bbox: object) -> bool:
@@ -461,6 +502,34 @@ def validate_visual_manifest(output_dir: Path, manifest_path: Path) -> dict[str,
                         expected="A nonempty raster image decodable by Pillow.",
                     )
                 )
+            elif page_in_range and bbox_valid and page is not None:
+                if not _screenshot_matches_pdf_region(
+                    output / "thesis.pdf",
+                    page_number=page,
+                    bbox=list(bbox),
+                    screenshot_path=resolved,
+                ):
+                    identity_failed = True
+                    failures.append(
+                        _failure(
+                            f"{semantic}-SCREENSHOT-PDF",
+                            gate="V00",
+                            status="failed",
+                            reason="visual_screenshot_pdf_mismatch",
+                            evidence={
+                                "paths": [str(resolved), str(output / "thesis.pdf")],
+                                "page": page,
+                                "bbox": bbox,
+                                "sha256": sha256_file(resolved),
+                            },
+                            evidence_text=(
+                                "Screenshot pixels do not match the declared PDF page and bbox."
+                            ),
+                            expected=(
+                                "The screenshot is an exact supported-scale raster of the declared PDF region."
+                            ),
+                        )
+                    )
         review_statuses.append(status if isinstance(status, str) else "unknown")
 
     missing_regions = sorted(REQUIRED_VISUAL_REGIONS - regions)

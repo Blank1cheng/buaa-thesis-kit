@@ -6,6 +6,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+README_PATH = REPO_ROOT / "README.md"
 SKILL_DIR = REPO_ROOT / "skills" / "normalizing-buaa-theses"
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 REFERENCES_DIR = SKILL_DIR / "references"
@@ -14,6 +15,11 @@ REFERENCES_DIR = SKILL_DIR / "references"
 def read_skill() -> str:
     assert SKILL_PATH.is_file(), f"missing main skill: {SKILL_PATH}"
     return SKILL_PATH.read_text(encoding="utf-8")
+
+
+def read_readme() -> str:
+    assert README_PATH.is_file(), f"missing README: {README_PATH}"
+    return README_PATH.read_text(encoding="utf-8")
 
 
 def parse_skill_frontmatter() -> dict[str, object]:
@@ -339,3 +345,59 @@ def test_equation_handling_defines_source_priority_and_optional_external_ocr() -
         "equation source priority must place OMML and MTEF before verified text, "
         "then Agent visual, then external OCR"
     )
+
+
+def test_equation_handling_documents_hash_bound_agent_review_ledger() -> None:
+    reference = read_reference("equation-handling.md").casefold()
+
+    for token in (
+        "--equation-review",
+        "agent_visual",
+        "candidate.tex",
+        "source_preview.png",
+        "rendered.png",
+        "correction_reason",
+        "corrected_latex_sha256",
+    ):
+        assert token in reference
+    assert "source_sha256" in reference
+
+
+def test_output_contract_documents_flat_packaging_and_independent_validation() -> None:
+    reference = read_reference("output-contract.md")
+    normalized = reference.casefold()
+
+    for token in (
+        "scripts/package_agent_delivery.py",
+        "scripts/validate_agent_delivery.py",
+        "--visual-manifest",
+        "--gate-board",
+        "model.json source",
+    ):
+        assert token.casefold() in normalized
+    assert re.search(
+        r"(?:inline|flatten)[^\n]{0,180}(?:\\include\{data|generated tex fragments)"
+        r"|(?:\\include\{data|generated tex fragments)[^\n]{0,180}(?:inline|flatten)",
+        normalized,
+    )
+    assert re.search(
+        r"(?:fresh|new|重新|全新)[^.\n]{0,160}(?:compile|编译)[^.\n]{0,220}(?:pixel|像素|page count|页数)",
+        normalized,
+    )
+
+
+def test_readme_exposes_only_the_current_latex_first_delivery_workflow() -> None:
+    readme = read_readme()
+    normalized = readme.casefold()
+
+    for token in (
+        "scripts/run_latex_pipeline.py",
+        "scripts/package_agent_delivery.py",
+        "scripts/validate_agent_delivery.py",
+        "skills/normalizing-buaa-theses/skill.md",
+        "output/failure_queue.json",
+        "output/image/visual_review.json",
+    ):
+        assert token.casefold() in normalized
+    assert "thesis.docx 是权威版面来源" not in readme
+    assert "output/template_inheritance_report.json" not in normalized
