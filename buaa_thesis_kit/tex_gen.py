@@ -15,6 +15,7 @@ DEFAULT_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "templates" / "buaa_undergraduate_thesis_template.tex"
 )
 SUPPORTED_IMAGE_SUFFIXES = {".bmp", ".eps", ".jpg", ".jpeg", ".pdf", ".png", ".tif", ".tiff"}
+OCR_EVIDENCE_FIGURE_TYPES = {"pdf-page-image"}
 
 FALLBACK_TEMPLATE = r"""\documentclass[UTF8,a4paper,12pt]{ctexrep}
 \usepackage{geometry}
@@ -258,6 +259,11 @@ def _render_figures(
 ) -> list[str]:
     blocks: list[str] = []
     for figure in figures:
+        if _is_resolved_ocr_evidence_figure(figure):
+            continue
+        if _is_ocr_evidence_figure(figure):
+            blocks.append(_ocr_evidence_review_comment(figure, image_root))
+            continue
         image_path = _resolve_image_path(figure, output_parent, image_root)
         if image_path is None:
             blocks.append(_figure_review_comment(figure, image_root))
@@ -312,8 +318,8 @@ def _render_references(references: Iterable[ContentBlock]) -> list[str]:
     return [
         "\n\n".join(
             [
-                r"\chapter*{References}",
-                r"\addcontentsline{toc}{chapter}{References}",
+                r"\chapter*{参考文献}",
+                r"\addcontentsline{toc}{chapter}{参考文献}",
                 *rendered_references,
             ]
         )
@@ -418,6 +424,14 @@ def _is_supported_existing_image(path: Path) -> bool:
     return path.exists() and path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
 
 
+def _is_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return str(figure.type or "").strip().lower() in OCR_EVIDENCE_FIGURE_TYPES
+
+
+def _is_resolved_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return _is_ocr_evidence_figure(figure) and not figure.requires_review
+
+
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(root.resolve(strict=False))
@@ -472,6 +486,15 @@ def _figure_review_comment(figure: AssetItem, image_root: Path | None) -> str:
     return "\n".join(comments)
 
 
+def _ocr_evidence_review_comment(figure: AssetItem, image_root: Path | None) -> str:
+    comments = [f"% REVIEW: OCR evidence page image {figure.id} requires transcription; not included as a final figure"]
+    if figure.caption:
+        comments.append(f"% REVIEW: OCR evidence caption: {_comment_value(figure.caption)}")
+    if figure.path:
+        comments.append(f"% REVIEW: OCR evidence path: {_comment_value(_sanitized_path(figure.path, image_root))}")
+    return "\n".join(comments)
+
+
 def _equation_review_comment(equation: EquationItem) -> str:
     comments = [
         f"% REVIEW: equation {equation.id} ({equation.kind}) requires manual TeX transcription"
@@ -480,6 +503,10 @@ def _equation_review_comment(equation: EquationItem) -> str:
         comments.append(f"% REVIEW: equation text: {_comment_value(equation.text)}")
     if equation.number:
         comments.append(f"% REVIEW: equation number: {_comment_value(equation.number)}")
+    if equation.preview_path:
+        comments.append(
+            f"% REVIEW: equation preview: {_comment_value(_sanitized_path(equation.preview_path, None))}"
+        )
     return "\n".join(comments)
 
 

@@ -15,13 +15,24 @@ from buaa_thesis_kit.pipeline import run_pipeline  # noqa: E402
 
 def main(args: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the BUAA thesis Phase 1 pipeline.")
-    parser.add_argument("source", type=Path, help="Source thesis DOCX file.")
+    parser.add_argument("source", type=Path, help="Source thesis DOC, DOCX, or PDF file.")
     parser.add_argument("--out", required=True, type=Path, help="Public output directory.")
     parser.add_argument("--template", type=Path, default=None, help="Optional Word DOCX template.")
+    parser.add_argument(
+        "--sample-mode",
+        choices=("full", "truncated"),
+        default="full",
+        help="Use truncated for debug samples so body/reference completeness is not a failure.",
+    )
     parser.add_argument(
         "--keep-work",
         action="store_true",
         help="Retain the adjacent process work directory for inspection.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail finalization when any output or report item still needs manual review.",
     )
     namespace = parser.parse_args(args)
 
@@ -30,6 +41,8 @@ def main(args: list[str] | None = None) -> int:
         namespace.out,
         template_path=namespace.template,
         keep_work=namespace.keep_work,
+        strict=namespace.strict,
+        sample_mode=namespace.sample_mode,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report.get("status") in {"pass", "needs_review"} else 1

@@ -1,0 +1,35 @@
+# 逐页视觉验证
+
+将当前 PDF 的每一页渲染为固定 DPI 图像，Agent visual 必须按页序检查；截图证据绑定 PDF SHA、页码、bbox、检查项和 H-ID。高风险区域另存高分辨率裁剪，不用口头描述替代证据。
+
+## 必查页面
+
+- 封面、书脊、任务书、声明。
+- 中文摘要、英文摘要、目录的首页与末页。
+- 每个章首页。
+- 含复杂图片、跨页表格或公式的页面。
+- 参考文献首页与末页。
+- 致谢、附录及文档末页。
+
+## 每页检查
+
+1. 检查文本、图片、表格、页眉页脚是否重叠、越界、被裁切或出现孤行孤字。
+2. 核对字号、字体、行距、段前后距和章首页留白；封面与前置页按对应培养层次模板比对。
+3. 核对页码样式、起始页、连续性，以及目录条目、层级、页码和正文标题的一致性。
+4. 核对图题、表题、编号、交叉引用、公式符号与编号对齐。
+5. 核对参考文献悬挂缩进、换行对齐、右边界和首末项完整性。
+
+发现问题时保存整页截图和最小区域裁剪；复修后以同一页和区域生成新证据，不覆盖失败证据。
+
+## Visual review manifest
+
+Write the audit manifest to `output/image/visual_review.json`. It contains
+`pdf_sha256`, `pdf_page_count`, and a `reviews` list. Every review contains
+`region`, `pages`, `screenshot`, `bbox`, `status`, `checks`, and `failure_ids`.
+
+Each page has one independent, real raster screenshot. A review binds exactly
+one PDF page, and its `bbox` must remain inside that page. Complete page coverage
+is required: the review page union must cover every PDF page. Harness must
+independently rasterize the declared page and bbox at a supported fixed scale and
+compare exact pixels; a merely decodable or unrelated image is not evidence.
+Every non-pass failure_ids entry must exist in the active failure_queue.json.

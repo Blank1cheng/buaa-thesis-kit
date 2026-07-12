@@ -6,13 +6,25 @@ from typing import Any
 from buaa_thesis_kit.pdf_export import _verify_pdf_file
 
 
-ALLOWED_TOP_LEVEL = {"thesis.docx", "thesis.pdf", "thesis.tex", "report.md", "image"}
+REQUIRED_TOP_LEVEL = {
+    "thesis.docx",
+    "thesis.pdf",
+    "thesis.tex",
+    "report.md",
+    "image",
+    "model.json",
+    "template_inheritance_report.json",
+}
+OPTIONAL_TOP_LEVEL = {"harness", "layout_consistency_report.json", "template_diff", "render_smoke"}
+ALLOWED_TOP_LEVEL = REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
 REQUIRED_FILES = ("thesis.docx", "thesis.pdf", "thesis.tex", "report.md")
 REQUIRED_REPORT_OUTPUT_ALIASES = (
     ("word", "thesis.docx"),
     ("pdf", "thesis.pdf"),
     ("tex", "thesis.tex"),
     ("image",),
+    ("model.json",),
+    ("template_inheritance_report.json",),
 )
 PROCESS_FILE_SUFFIXES = {
     ".aux",
@@ -51,7 +63,7 @@ def validate_clean_output(output_dir: Path) -> tuple[bool, list[str]]:
     entries = {path.name: path for path in output.iterdir()}
     actual_names = set(entries)
 
-    for missing in sorted(ALLOWED_TOP_LEVEL - actual_names):
+    for missing in sorted(REQUIRED_TOP_LEVEL - actual_names):
         messages.append(f"Missing required output: {missing}")
 
     for unexpected in sorted(actual_names - ALLOWED_TOP_LEVEL):
@@ -74,9 +86,17 @@ def validate_clean_output(output_dir: Path) -> tuple[bool, list[str]]:
 
     image_dir = output / "image"
     if image_dir.exists() and not image_dir.is_dir():
-        messages.append("image must be a directory")
+            messages.append("image must be a directory")
     elif image_dir.is_dir():
         messages.extend(_validate_image_dir(image_dir))
+
+    template_diff_dir = output / "template_diff"
+    if template_diff_dir.exists() and not template_diff_dir.is_dir():
+        messages.append("template_diff must be a directory")
+
+    harness_dir = output / "harness"
+    if harness_dir.exists() and not harness_dir.is_dir():
+        messages.append("harness must be a directory")
 
     return not messages, messages
 
@@ -88,6 +108,10 @@ def build_report(
     blocking_items: list[str],
     manual_review: list[str],
     notes: list[str],
+    metadata: dict[str, Any] | None = None,
+    editability: dict[str, Any] | None = None,
+    ocr_ledger: list[dict[str, Any]] | None = None,
+    equation_ledger: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     output_statuses = [_normalize_status(status) for status in outputs.values()]
     missing_required = _missing_required_report_outputs(outputs)
@@ -100,7 +124,7 @@ def build_report(
     else:
         status = "pass"
 
-    return {
+    report = {
         "status": status,
         "source": source,
         "outputs": outputs,
@@ -109,6 +133,15 @@ def build_report(
         "manual_review": manual_review,
         "notes": notes,
     }
+    if metadata is not None:
+        report["metadata"] = metadata
+    if editability is not None:
+        report["editability"] = editability
+    if ocr_ledger is not None:
+        report["ocr_ledger"] = ocr_ledger
+    if equation_ledger is not None:
+        report["equation_ledger"] = equation_ledger
+    return report
 
 
 def write_report_md(report: dict[str, Any], path: Path) -> None:
@@ -131,6 +164,22 @@ def write_report_md(report: dict[str, Any], path: Path) -> None:
         "## Summary",
         "",
         *_format_mapping(report.get("summary", {})),
+        "",
+        "## Editability Audit",
+        "",
+        *_format_mapping(report.get("editability", {})),
+        "",
+        "## OCR Ledger",
+        "",
+        *_format_ocr_ledger(report.get("ocr_ledger", [])),
+        "",
+        "## Equation Ledger",
+        "",
+        *_format_equation_ledger(report.get("equation_ledger", [])),
+        "",
+        "## Metadata",
+        "",
+        *_format_metadata(report.get("metadata", {})),
         "",
         "## Blocking Items",
         "",
@@ -204,3 +253,69 @@ def _format_list(items: Any) -> list[str]:
     if not items:
         return ["- None"]
     return [f"- {item}" for item in items]
+
+
+def _format_metadata(metadata: Any) -> list[str]:
+    if not metadata:
+        return ["- None"]
+    lines: list[str] = []
+    for field, payload in metadata.items():
+        if isinstance(payload, dict):
+            value = payload.get("value", "")
+            evidence = payload.get("evidence") or {}
+            lines.append(f"- {field}: {value}")
+            if isinstance(evidence, dict) and evidence:
+                evidence_parts = [
+                    f"{key}={evidence[key]}"
+                    for key in ("method", "page_hint", "paragraph_index", "confidence", "requires_review")
+                    if key in evidence and evidence[key] is not None
+                ]
+                if evidence_parts:
+                    lines.append(f"  evidence: {', '.join(evidence_parts)}")
+        else:
+            lines.append(f"- {field}: {payload}")
+    return lines
+
+
+def _format_ocr_ledger(items: Any) -> list[str]:
+    if not items:
+        return ["- None"]
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            lines.append(f"- {item}")
+            continue
+        image_name = Path(str(item.get("image_path", ""))).name
+        parts = [
+            f"page={item.get('page', '')}",
+            f"status={item.get('status', '')}",
+            f"image={image_name}",
+            f"text_characters={item.get('text_characters', 0)}",
+            f"confidence={item.get('confidence', 0.0)}",
+            f"requires_review={item.get('requires_review', True)}",
+        ]
+        lines.append(f"- {', '.join(parts)}")
+    return lines
+
+
+def _format_equation_ledger(items: Any) -> list[str]:
+    if not items:
+        return ["- None"]
+    lines: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            lines.append(f"- {item}")
+            continue
+        preview_name = Path(str(item.get("preview_path", ""))).name
+        parts = [
+            f"id={item.get('id', '')}",
+            f"kind={item.get('kind', '')}",
+            f"status={item.get('status', '')}",
+            f"number={item.get('number', '')}",
+            f"text={item.get('text', '')}",
+            f"preview={preview_name}",
+            f"editable_in_word={item.get('editable_in_word', False)}",
+            f"requires_review={item.get('requires_review', True)}",
+        ]
+        lines.append(f"- {', '.join(parts)}")
+    return lines

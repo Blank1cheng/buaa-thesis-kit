@@ -1,0 +1,4 @@
+interface:
+  display_name: "BUAA 论文规范化"
+  short_description: "将北航本科或硕士 DOCX/PDF 转为可审计 LaTeX/PDF"
+  default_prompt: "使用 $normalizing-buaa-theses 规范化这篇北航论文，并完整输出 DOCX、PDF、TeX、model、report、failure_queue 和 image 资产及证据。"

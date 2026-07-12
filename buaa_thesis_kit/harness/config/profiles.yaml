@@ -1,0 +1,51 @@
+profiles:
+  latex_pdf:
+    description: Gates required for a generated LaTeX PDF artifact.
+    required_gates:
+      - G20
+      - G21
+      - G22
+      - G23
+      - G24
+      - G25
+      - G27
+      - G28
+    optional_gates:
+      - G26
+
+  word_editable:
+    description: Core gates for an editable Word artifact.
+    required_gates:
+      - G00
+      - G02
+      - G05
+      - G06
+    optional_gates:
+      - G07
+      - G08
+      - G11
+
+  legacy_word_layout:
+    description: Full legacy Word layout gate policy.
+    required_gates:
+      - G00
+      - G01
+      - G02
+      - G03
+      - G04
+      - G05
+      - G06
+      - G07
+    optional_gates:
+      - G08
+      - G09
+      - G10
+      - G11
+
+  agent_visual_review:
+    description: Review-manifest identity and completeness checks.
+    required_gates:
+      - V00
+      - V01
+    optional_gates:
+      - V02

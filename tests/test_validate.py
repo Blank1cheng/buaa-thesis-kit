@@ -20,12 +20,40 @@ def _write_required_outputs(output_dir: Path) -> None:
     _write_valid_pdf(output_dir / "thesis.pdf")
     (output_dir / "thesis.tex").write_text("tex", encoding="utf-8")
     (output_dir / "report.md").write_text("report", encoding="utf-8")
+    (output_dir / "model.json").write_text("{}", encoding="utf-8")
+    (output_dir / "template_inheritance_report.json").write_text("{}", encoding="utf-8")
     (output_dir / "image").mkdir()
 
 
 def test_validate_clean_output_passes_with_minimal_nonempty_files_and_image_dir(tmp_path):
     output_dir = tmp_path / "output"
     _write_required_outputs(output_dir)
+
+    ok, messages = validate_clean_output(output_dir)
+
+    assert ok is True
+    assert messages == []
+
+
+def test_validate_clean_output_allows_layout_consistency_report(tmp_path):
+    output_dir = tmp_path / "output"
+    _write_required_outputs(output_dir)
+    (output_dir / "layout_consistency_report.json").write_text("{}", encoding="utf-8")
+
+    ok, messages = validate_clean_output(output_dir)
+
+    assert ok is True
+    assert messages == []
+
+
+def test_validate_clean_output_allows_harness_report_directory(tmp_path):
+    output_dir = tmp_path / "output"
+    _write_required_outputs(output_dir)
+    harness = output_dir / "harness"
+    harness.mkdir()
+    (harness / "status.json").write_text("{}", encoding="utf-8")
+    (harness / "model_validation_report.json").write_text("{}", encoding="utf-8")
+    (harness / "output_text_report.json").write_text("{}", encoding="utf-8")
 
     ok, messages = validate_clean_output(output_dir)
 
@@ -160,7 +188,14 @@ def test_build_report_marks_failed_for_blocking_items_or_failed_outputs():
 def test_build_report_marks_needs_review_for_manual_review_or_output_review():
     manual = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=["check equations"],
@@ -168,7 +203,14 @@ def test_build_report_marks_needs_review_for_manual_review_or_output_review():
     )
     output_review = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "needs_review", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "needs_review",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=[],
@@ -182,7 +224,14 @@ def test_build_report_marks_needs_review_for_manual_review_or_output_review():
 def test_build_report_marks_pass_when_no_failures_or_reviews():
     report = build_report(
         source="source.docx",
-        outputs={"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        outputs={
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         summary={"items": 2},
         blocking_items=[],
         manual_review=[],
@@ -192,12 +241,67 @@ def test_build_report_marks_pass_when_no_failures_or_reviews():
     assert report == {
         "status": "pass",
         "source": "source.docx",
-        "outputs": {"thesis.docx": "pass", "thesis.pdf": "pass", "thesis.tex": "pass", "image": "pass"},
+        "outputs": {
+            "thesis.docx": "pass",
+            "thesis.pdf": "pass",
+            "thesis.tex": "pass",
+            "image": "pass",
+            "model.json": "pass",
+            "template_inheritance_report.json": "pass",
+        },
         "summary": {"items": 2},
         "blocking_items": [],
         "manual_review": [],
         "notes": [],
     }
+
+
+def test_build_report_includes_metadata_when_provided():
+    metadata = {
+        "student_id": {
+            "value": "20370001",
+            "evidence": {
+                "method": "pdf-text-label",
+                "page_hint": 1,
+                "confidence": 0.7,
+                "requires_review": True,
+            },
+        }
+    }
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        metadata=metadata,
+    )
+
+    assert report["metadata"] == metadata
+
+
+def test_build_report_includes_editability_audit_when_provided():
+    editability = {
+        "editable_characters": 1200,
+        "paragraph_count": 42,
+        "table_count": 2,
+        "drawing_count": 3,
+        "page_screenshot_drawing_count": 0,
+    }
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        editability=editability,
+    )
+
+    assert report["editability"] == editability
 
 
 def test_build_report_fails_for_missing_required_or_unknown_output_statuses():
@@ -255,6 +359,142 @@ def test_write_report_md_includes_policy_text_sections_and_list_items(tmp_path):
     assert "- missing PDF export" in text
     assert "- confirm equation layout" in text
     assert "- generated from template" in text
+
+
+def test_write_report_md_includes_metadata_values_and_evidence(tmp_path):
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        metadata={
+            "title_cn": {
+                "value": "PDF Pipeline Thesis",
+                "evidence": {
+                    "method": "pdf-title-heuristic",
+                    "page_hint": 1,
+                    "confidence": 0.4,
+                    "requires_review": True,
+                },
+            },
+            "student_id": {
+                "value": "20370001",
+                "evidence": {
+                    "method": "pdf-text-label",
+                    "page_hint": 1,
+                    "confidence": 0.7,
+                    "requires_review": True,
+                },
+            },
+        },
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Metadata" in text
+    assert "- title_cn: PDF Pipeline Thesis" in text
+    assert "method=pdf-title-heuristic" in text
+    assert "- student_id: 20370001" in text
+    assert "confidence=0.7" in text
+
+
+def test_write_report_md_includes_editability_audit(tmp_path):
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "pass", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=[],
+        notes=[],
+        editability={
+            "editable_characters": 1200,
+            "paragraph_count": 42,
+            "table_count": 2,
+            "drawing_count": 3,
+            "page_screenshot_drawing_count": 0,
+        },
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "## Editability Audit" in text
+    assert "- editable_characters: 1200" in text
+    assert "- page_screenshot_drawing_count: 0" in text
+
+
+def test_build_report_and_markdown_include_ocr_ledger(tmp_path):
+    ocr_ledger = [
+        {
+            "page": 1,
+            "status": "needs_ocr",
+            "image_path": "D:/work/output/image/pdf-page-001.png",
+            "text_characters": 0,
+            "confidence": 0.0,
+            "requires_review": True,
+        }
+    ]
+
+    report = build_report(
+        source="source.pdf",
+        outputs={"word": "pass", "pdf": "pass", "tex": "needs_review", "image": "pass"},
+        summary={},
+        blocking_items=[],
+        manual_review=["OCR required"],
+        notes=[],
+        ocr_ledger=ocr_ledger,
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    assert report["ocr_ledger"] == ocr_ledger
+    text = path.read_text(encoding="utf-8")
+    assert "## OCR Ledger" in text
+    assert "page=1" in text
+    assert "status=needs_ocr" in text
+    assert "pdf-page-001.png" in text
+
+
+def test_build_report_and_markdown_include_equation_ledger(tmp_path):
+    equation_ledger = [
+        {
+            "id": "eq-1",
+            "kind": "embedded-object",
+            "status": "editable_ole_object",
+            "number": "(1)",
+            "text": "equation.bin",
+            "preview_path": "D:/work/output/image/formula.png",
+            "editable_in_word": True,
+            "requires_review": True,
+        }
+    ]
+
+    report = build_report(
+        source="source.docx",
+        outputs={"word": "pass", "pdf": "pass", "tex": "needs_review", "image": "pass"},
+        summary={"equations": 1},
+        blocking_items=[],
+        manual_review=["Equation eq-1 requires review: embedded-object"],
+        notes=[],
+        equation_ledger=equation_ledger,
+    )
+    path = tmp_path / "report.md"
+
+    write_report_md(report, path)
+
+    assert report["equation_ledger"] == equation_ledger
+    text = path.read_text(encoding="utf-8")
+    assert "## Equation Ledger" in text
+    assert "id=eq-1" in text
+    assert "status=editable_ole_object" in text
+    assert "formula.png" in text
+    assert "editable_in_word=True" in text
 
 
 def test_export_pdf_from_docx_returns_false_for_missing_source_without_junk(tmp_path):
@@ -446,3 +686,34 @@ def test_verify_pdf_file_checks_existence_size_header_and_parseability(tmp_path)
     assert "invalid" in truncated_reason.lower()
     assert valid_ok is True
     assert valid_reason == "PDF export verified"
+
+
+def test_update_word_fields_updates_toc_and_repagination():
+    calls = []
+
+    class Fields:
+        def Update(self):
+            calls.append("fields")
+
+    class TocItem:
+        def Update(self):
+            calls.append("toc")
+
+    class Tocs:
+        Count = 1
+
+        def __call__(self, index):
+            assert index == 1
+            return TocItem()
+
+    class FakeDocument:
+        def __init__(self):
+            self.Fields = Fields()
+            self.TablesOfContents = Tocs()
+
+        def Repaginate(self):
+            calls.append("repaginate")
+
+    pdf_export._update_word_fields(FakeDocument())
+
+    assert calls == ["fields", "toc", "repaginate"]

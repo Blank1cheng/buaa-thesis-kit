@@ -8,6 +8,7 @@ from buaa_thesis_kit.models import (
     ContentBlock,
     EquationItem,
     Metadata,
+    OcrLedgerItem,
     SourceEvidence,
     ThesisModel,
 )
@@ -65,6 +66,15 @@ def test_thesis_model_serializes_nested_items_and_metadata_evidence():
         equations=[EquationItem(id="eq-1", kind="latex", latex="E=mc^2", number="(1)", source=evidence)],
         references=[ContentBlock(id="ref-1", type="reference", text="Reference text")],
         appendices=[ContentBlock(id="app-1", type="appendix", title="附录A")],
+        ocr_ledger=[
+            OcrLedgerItem(
+                page=1,
+                status="needs_ocr",
+                image_path="image/pdf-page-001.png",
+                confidence=0.0,
+                requires_review=True,
+            )
+        ],
     )
 
     payload = model.to_dict()
@@ -76,6 +86,8 @@ def test_thesis_model_serializes_nested_items_and_metadata_evidence():
     assert payload["equations"][0]["source"]["requires_review"] is False
     assert payload["references"][0]["source"] is None
     assert payload["appendices"][0]["title"] == "附录A"
+    assert payload["ocr_ledger"][0]["page"] == 1
+    assert payload["ocr_ledger"][0]["status"] == "needs_ocr"
 
 
 def test_mutating_serialized_payload_does_not_mutate_model():

@@ -1,22 +1,57 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
-from buaa_thesis_kit.models import AssetItem, ContentBlock, Metadata, SourceEvidence, ThesisModel
+from buaa_thesis_kit.models import (
+    AssetItem,
+    ContentBlock,
+    EquationItem,
+    Metadata,
+    OcrLedgerItem,
+    SourceEvidence,
+    ThesisModel,
+)
+from buaa_thesis_kit.latex_to_omml import latex_to_omml
+from buaa_thesis_kit.extract.task_book_extract import extract_task_book_from_blocks
+from buaa_thesis_kit.structure_parse import (
+    PdfTextLine as PdfLine,
+    extract_equations_from_sections,
+    parse_pdf_structure,
+    write_structure_markdown,
+)
 
 
 SOURCE_PDF_NAME = "source.pdf"
 
 
 @dataclass(frozen=True)
-class PdfLine:
+class OcrResult:
+    text: str
+    confidence: float = 0.0
+    engine: str = "ocr"
+
+
+OcrEngine = Callable[[Path], OcrResult | str | dict[str, Any] | None]
+
+
+@dataclass(frozen=True)
+class PdfTextBlock:
+    bbox: tuple[float, float, float, float]
+    text: str
+
+
+@dataclass(frozen=True)
+class PdfImageCandidate:
     index: int
     page: int
-    text: str
+    bbox: tuple[float, float, float, float]
+    caption: str
 
 
 FIELD_LABELS: dict[str, tuple[str, ...]] = {
@@ -24,7 +59,15 @@ FIELD_LABELS: dict[str, tuple[str, ...]] = {
     "title_en": ("English Title", "Title in English", "Title"),
     "student_name": ("学生姓名", "作者姓名", "Student Name", "Author", "Name"),
     "student_id": ("学生学号", "学号", "Student ID", "Student No", "Student Number"),
-    "college": ("学院名称", "所在学院", "学院", "College", "School"),
+    "college": (
+        "院（系）名称",
+        "院(系)名称",
+        "学院名称",
+        "所在学院",
+        "学院",
+        "College",
+        "School",
+    ),
     "major": ("专业名称", "专业", "Major"),
     "advisor": ("指导教师姓名", "指导教师", "导师", "Advisor", "Supervisor"),
     "date": ("完成日期", "提交日期", "日期", "Date"),
@@ -33,9 +76,42 @@ FIELD_LABELS: dict[str, tuple[str, ...]] = {
 }
 REQUIRED_METADATA = ("title_cn", "student_name", "student_id", "college", "major", "advisor", "date")
 REFERENCE_HEADINGS = {"references", "reference", "参考文献"}
+TOC_HEADINGS = {"目录", "目 录", "contents", "table of contents"}
+SPLIT_HEADING_PAIRS = {
+    ("摘", "要"): "摘要",
+    ("目", "录"): "目录",
+}
+FRONT_MATTER_HEADINGS = {"本人声明", "摘要", "Abstract"}
+RUNNING_HEADER_PREFIXES = (
+    "北京航空航天大学毕业设计(论文)",
+    "北京航空航天大学毕业设计（论文）",
+)
+PAGE_NUMBER_MARKERS = {"第", "页"}
+FIGURE_CAPTION_RE = re.compile(
+    "^(?:(?:\u56fe)\\s*\\d+(?:[.\\-]\\d+)*|fig(?:ure)?\\.?\\s*\\d+(?:[.\\-]\\d+)*)\\s+.+",
+    flags=re.IGNORECASE,
+)
+TABLE_CAPTION_RE = re.compile(
+    r"^(?:(?:\u8868)\s*\d+(?:[.\-]\d+)*|table\s+\d+(?:[.\-]\d+)*)(?:\s+.+)?$",
+    flags=re.IGNORECASE,
+)
+TABLE_NUMBER_RE = re.compile(
+    r"(?:\u8868|table)\s*(\d+(?:[.\-]\d+)*)",
+    flags=re.IGNORECASE,
+)
+MIN_DISPLAY_IMAGE_AREA = 5_000.0
+LARGE_UNCAPTIONED_IMAGE_AREA = 40_000.0
+MAX_FIGURE_CAPTION_DISTANCE = 90.0
 NEXT_LINE_LABELS: dict[str, str] = {
     "单位代码": "unit_code",
     "学校代码": "unit_code",
+    "分类号": "classification",
+    "1分类号": "classification",
+    "1 分类号": "classification",
+    "中图分类号": "classification",
+    "院（系）名称": "college",
+    "院(系)名称": "college",
+    "学院名称": "college",
 }
 VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("学", "号"), "student_id"),
@@ -45,9 +121,17 @@ VERTICAL_FIELD_LABELS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("指", "导", "教", "师"), "advisor"),
 )
 TITLE_ANCHORS = {"毕业设计(论文)", "毕业设计（论文）", "本科毕业设计(论文)", "本科毕业设计（论文）"}
+BUAA_SPINE_MARKER = "论文封面书脊"
+BUAA_TASK_BOOK_TITLE = "本科生毕业设计（论文）任务书"
+PDF_EQUATION_NUMBER_RE = re.compile(r"^\(\s*(\d+(?:[.\-]\d+)+)\s*\)$")
+PDF_MATH_FONT_MARKERS = ("symbol", "mt-extra", "math", "cmmi", "cmsy", "italic")
 
 
-def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
+def extract_pdf_model(
+    pdf_path: Path,
+    work_dir: Path,
+    ocr_engine: OcrEngine | None = None,
+) -> ThesisModel:
     """Extract a reviewable ThesisModel from a PDF source."""
     source = Path(pdf_path)
     work = Path(work_dir)
@@ -89,32 +173,82 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
             return model
 
         lines: list[PdfLine] = []
+        positioned_equations: list[EquationItem] = []
         line_index = 0
         for page_index in range(document.page_count):
             page = document.load_page(page_index)
-            page_text = _page_text(page)
-            if page_text:
-                for text in page_text:
-                    lines.append(PdfLine(index=line_index, page=page_index + 1, text=text))
-                    line_index += 1
+            positioned_equations.extend(
+                _extract_page_equation_regions(
+                    page,
+                    work,
+                    page_index + 1,
+                    len(positioned_equations) + 1,
+                )
+            )
+            page_lines = _page_text_lines(page, page_index + 1, line_index)
+            if page_lines:
+                lines.extend(page_lines)
+                line_index = page_lines[-1].index + 1
+                model.figures.extend(_extract_page_figures(page, work, page_index + 1))
             else:
                 figure = _render_page_image(page, work, page_index + 1)
                 model.figures.append(figure)
-                model.extraction_warnings.append(
-                    f"OCR required: PDF page {page_index + 1} has no extractable text; page image rendered for review."
-                )
+                ocr_result = _run_ocr_engine(Path(figure.path), ocr_engine)
+                if ocr_result is not None and _clean_text(ocr_result.text):
+                    figure.requires_review = False
+                    figure.caption = f"PDF page {page_index + 1} OCR evidence image; OCR text extracted"
+                    for text in _ocr_text_lines(ocr_result.text):
+                        lines.append(PdfLine(index=line_index, page=page_index + 1, text=text))
+                        line_index += 1
+                    model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1, ocr_result))
+                    model.extraction_warnings.append(
+                        f"OCR text extracted: PDF page {page_index + 1} requires review against page image."
+                    )
+                else:
+                    model.ocr_ledger.append(_ocr_ledger_item(figure, page_index + 1))
+                    model.extraction_warnings.append(
+                        f"OCR required: PDF page {page_index + 1} has no extractable text; page image rendered for review."
+                    )
 
         if lines:
             model.metadata = _extract_metadata(lines)
-            model.sections, model.references = _extract_content(lines)
+            model.task_book = extract_task_book_from_blocks(lines, model.metadata.to_dict())
+            parsed = parse_pdf_structure(lines, source_file=SOURCE_PDF_NAME)
+            model.front_matter = parsed.front_matter
+            model.sections = parsed.sections
+            model.references = parsed.references
+            model.equations.extend(parsed.equations)
+            model.sections, model.tables = _extract_tables_from_sections(model.sections)
+            model.sections, extracted_equations = extract_equations_from_sections(
+                model.sections,
+                source_file=SOURCE_PDF_NAME,
+                starting_number=len(model.equations) + 1,
+            )
+            model.equations.extend(extracted_equations)
+            write_structure_markdown(parsed, work / "pdf-structured-extraction.md")
+            model.extraction_warnings.extend(_layout_parse_warnings(parsed, len(lines)))
             model.extraction_warnings.append(
-                "PDF input converted through text extraction; layout review required against the source PDF."
+                "PDF input converted through layout-aware text extraction; layout review required against the source PDF."
             )
         else:
             model.extraction_warnings.append(
                 "OCR required: PDF has no extractable text; generated Word/TeX content uses rendered page images only."
             )
 
+        model.equations = _merge_pdf_equation_sources(model.equations, positioned_equations)
+
+        if any(figure.type == "pdf-figure-image" for figure in model.figures):
+            model.extraction_warnings.append(
+                "PDF embedded figures extracted as cropped images; captions and placement require review."
+            )
+        if model.tables:
+            model.extraction_warnings.append(
+                "PDF tabular text converted to editable tables; structure requires review."
+            )
+        if any(equation.requires_review for equation in model.equations):
+            model.extraction_warnings.append(
+                "PDF equation-like text extracted for equation ledger; editable Word equation conversion requires review."
+            )
         model.extraction_warnings.extend(_metadata_warnings(model.metadata))
         if not model.sections and not model.figures:
             model.extraction_warnings.append("missing PDF body content")
@@ -123,10 +257,82 @@ def extract_pdf_model(pdf_path: Path, work_dir: Path) -> ThesisModel:
         document.close()
 
 
+def _page_text_lines(page, page_number: int, start_index: int) -> list[PdfLine]:
+    try:
+        layout = page.get_text("dict") or {}
+    except Exception:
+        return [
+            PdfLine(index=start_index + offset, page=page_number, text=text)
+            for offset, text in enumerate(_page_text(page))
+        ]
+
+    lines: list[PdfLine] = []
+    next_index = start_index
+    page_rect = getattr(page, "rect", None)
+    page_width = float(getattr(page_rect, "width", 0.0))
+    page_height = float(getattr(page_rect, "height", 0.0))
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for raw_line in block.get("lines", []):
+            spans = raw_line.get("spans", [])
+            text = _clean_text("".join(str(span.get("text", "")) for span in spans))
+            if not text:
+                continue
+            bbox = _bbox_tuple(raw_line.get("bbox")) or _bbox_tuple(block.get("bbox"))
+            first_span = spans[0] if spans else {}
+            try:
+                size = float(first_span.get("size", 0.0))
+            except (TypeError, ValueError):
+                size = 0.0
+            try:
+                flags = int(first_span.get("flags", 0))
+            except (TypeError, ValueError):
+                flags = 0
+            lines.append(
+                PdfLine(
+                    index=next_index,
+                    page=page_number,
+                    text=text,
+                    bbox=bbox,
+                    font=str(first_span.get("font", "")),
+                    size=size,
+                    flags=flags,
+                    page_width=page_width,
+                    page_height=page_height,
+                )
+            )
+            next_index += 1
+    if lines:
+        return lines
+    return [
+        PdfLine(index=start_index + offset, page=page_number, text=text)
+        for offset, text in enumerate(_page_text(page))
+    ]
+
+
 def _page_text(page) -> list[str]:
     raw = page.get_text("text") or ""
     lines = [_clean_text(line) for line in raw.splitlines()]
     return [line for line in lines if line]
+
+
+def _layout_parse_warnings(parsed, total_lines: int) -> list[str]:
+    warnings: list[str] = []
+    removed_header_footer = len(parsed.removed_header_footer_lines)
+    warnings.append(
+        "PDF layout line audit: "
+        f"total_lines={total_lines}, "
+        f"removed_header_footer={removed_header_footer}, "
+        f"removed_toc={parsed.removed_toc_line_count}, "
+        f"removed_field_codes={parsed.removed_field_code_line_count}."
+    )
+    if parsed.removed_field_code_line_count:
+        warnings.append(
+            "PDF field-code equation placeholders require manual review: "
+            f"{parsed.removed_field_code_line_count}."
+        )
+    return warnings
 
 
 def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:
@@ -157,8 +363,300 @@ def _render_page_image(page, work_dir: Path, page_number: int) -> AssetItem:
     )
 
 
+def _run_ocr_engine(image_path: Path, ocr_engine: OcrEngine | None) -> OcrResult | None:
+    engine = ocr_engine or _default_ocr_engine
+    try:
+        raw_result = engine(Path(image_path))
+    except Exception:
+        return None
+    return _coerce_ocr_result(raw_result)
+
+
+def _default_ocr_engine(image_path: Path) -> OcrResult | None:
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        return None
+
+    languages = [os.environ.get("BUAA_THESIS_OCR_LANG", "chi_sim+eng"), "eng"]
+    for language in dict.fromkeys(languages):
+        try:
+            with Image.open(image_path) as image:
+                text = pytesseract.image_to_string(image, lang=language)
+                confidence = _tesseract_confidence(pytesseract, image, language)
+        except Exception:
+            continue
+        if _clean_text(text):
+            return OcrResult(text=text, confidence=confidence, engine=f"tesseract:{language}")
+    return None
+
+
+def _tesseract_confidence(pytesseract, image, language: str) -> float:
+    try:
+        data = pytesseract.image_to_data(image, lang=language, output_type=pytesseract.Output.DICT)
+    except Exception:
+        return 0.0
+    confidences: list[float] = []
+    for value in data.get("conf", []):
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            continue
+        if confidence >= 0:
+            confidences.append(confidence)
+    if not confidences:
+        return 0.0
+    return round(sum(confidences) / len(confidences) / 100.0, 4)
+
+
+def _coerce_ocr_result(raw_result: OcrResult | str | dict[str, Any] | None) -> OcrResult | None:
+    if raw_result is None:
+        return None
+    if isinstance(raw_result, OcrResult):
+        return raw_result
+    if isinstance(raw_result, str):
+        return OcrResult(text=raw_result, confidence=0.0, engine="ocr")
+    if isinstance(raw_result, dict):
+        text = str(raw_result.get("text", ""))
+        try:
+            confidence = float(raw_result.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        engine = str(raw_result.get("engine", "ocr"))
+        return OcrResult(text=text, confidence=confidence, engine=engine)
+    return None
+
+
+def _ocr_text_lines(text: str) -> list[str]:
+    return [_clean_text(line) for line in str(text or "").splitlines() if _clean_text(line)]
+
+
+def _ocr_ledger_item(
+    figure: AssetItem,
+    page_number: int,
+    ocr_result: OcrResult | None = None,
+) -> OcrLedgerItem:
+    if ocr_result is not None and _clean_text(ocr_result.text):
+        return OcrLedgerItem(
+            page=page_number,
+            status="ocr_text_extracted",
+            image_path=figure.path,
+            text_characters=len(ocr_result.text),
+            confidence=ocr_result.confidence,
+            requires_review=True,
+            source=SourceEvidence(
+                file=SOURCE_PDF_NAME,
+                method=ocr_result.engine,
+                page_hint=page_number,
+                confidence=ocr_result.confidence,
+                requires_review=True,
+            ),
+        )
+    return OcrLedgerItem(
+        page=page_number,
+        status="needs_ocr",
+        image_path=figure.path,
+        text_characters=0,
+        confidence=0.0,
+        requires_review=True,
+        source=figure.source,
+    )
+
+
+def _extract_page_figures(page, work_dir: Path, page_number: int) -> list[AssetItem]:
+    try:
+        import fitz
+
+        layout = page.get_text("dict")
+    except Exception:
+        return []
+
+    text_blocks = _text_blocks_from_layout(layout)
+    candidates: list[PdfImageCandidate] = []
+    image_index = 0
+    for block in layout.get("blocks", []):
+        if block.get("type") != 1:
+            continue
+        bbox = _bbox_tuple(block.get("bbox"))
+        if bbox is None:
+            continue
+        caption = _nearest_figure_caption(bbox, text_blocks)
+        if _skip_pdf_image_block(bbox, page.rect, caption):
+            continue
+        image_index += 1
+        candidates.append(
+            PdfImageCandidate(
+                index=image_index,
+                page=page_number,
+                bbox=bbox,
+                caption=caption,
+            )
+        )
+
+    if not candidates:
+        return []
+
+    image_dir = work_dir / "pdf-figures"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    figures: list[AssetItem] = []
+    for group_index, group in enumerate(_group_image_candidates(candidates), start=1):
+        clip = _figure_clip_rect(fitz, page.rect, [candidate.bbox for candidate in group])
+        if clip.width <= 1 or clip.height <= 1:
+            continue
+        image_path = image_dir / f"pdf-figure-page-{page_number:03d}-{group_index:02d}.png"
+        try:
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=clip, alpha=False)
+            pixmap.save(str(image_path))
+        except Exception:
+            continue
+        caption = _common_caption(group)
+        figures.append(
+            AssetItem(
+                id=f"pdf-figure-{page_number}-{group_index}",
+                type="pdf-figure-image",
+                path=str(image_path),
+                caption=caption,
+                source=SourceEvidence(
+                    file=SOURCE_PDF_NAME,
+                    method="pdf-embedded-image",
+                    page_hint=page_number,
+                    confidence=0.62 if caption else 0.45,
+                    requires_review=True,
+                ),
+                requires_review=True,
+            )
+        )
+    return figures
+
+
+def _text_blocks_from_layout(layout: dict) -> list[PdfTextBlock]:
+    blocks: list[PdfTextBlock] = []
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        bbox = _bbox_tuple(block.get("bbox"))
+        if bbox is None:
+            continue
+        text = _clean_text(
+            " ".join(
+                str(span.get("text", ""))
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+            )
+        )
+        if text:
+            blocks.append(PdfTextBlock(bbox=bbox, text=text))
+    return blocks
+
+
+def _bbox_tuple(value) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def _nearest_figure_caption(
+    image_bbox: tuple[float, float, float, float],
+    text_blocks: list[PdfTextBlock],
+) -> str:
+    matches: list[tuple[float, PdfTextBlock]] = []
+    for block in text_blocks:
+        if not FIGURE_CAPTION_RE.match(block.text):
+            continue
+        vertical_gap = block.bbox[1] - image_bbox[3]
+        if vertical_gap < -2 or vertical_gap > MAX_FIGURE_CAPTION_DISTANCE:
+            continue
+        if _horizontal_overlap(image_bbox, block.bbox) <= 0:
+            continue
+        matches.append((vertical_gap, block))
+    if not matches:
+        return ""
+    return min(matches, key=lambda item: item[0])[1].text
+
+
+def _skip_pdf_image_block(
+    bbox: tuple[float, float, float, float],
+    page_rect,
+    caption: str,
+) -> bool:
+    area = _bbox_area(bbox)
+    if area < MIN_DISPLAY_IMAGE_AREA:
+        return True
+    if caption:
+        return False
+    if _is_page_sized_image(bbox, page_rect):
+        return True
+    if _is_header_footer_image(bbox, page_rect):
+        return True
+    return area < LARGE_UNCAPTIONED_IMAGE_AREA
+
+
+def _is_page_sized_image(bbox: tuple[float, float, float, float], page_rect) -> bool:
+    page_width = max(1.0, float(getattr(page_rect, "width", 0.0)))
+    page_height = max(1.0, float(getattr(page_rect, "height", 0.0)))
+    width = max(0.0, bbox[2] - bbox[0])
+    height = max(0.0, bbox[3] - bbox[1])
+    area_ratio = _bbox_area(bbox) / (page_width * page_height)
+    return (width / page_width >= 0.82 and height / page_height >= 0.82) or area_ratio >= 0.72
+
+
+def _is_header_footer_image(bbox: tuple[float, float, float, float], page_rect) -> bool:
+    page_top = float(getattr(page_rect, "y0", 0.0))
+    page_bottom = float(getattr(page_rect, "y1", 0.0))
+    return bbox[3] <= page_top + 130.0 or bbox[1] >= page_bottom - 90.0
+
+
+def _group_image_candidates(candidates: list[PdfImageCandidate]) -> list[list[PdfImageCandidate]]:
+    groups: list[list[PdfImageCandidate]] = []
+    by_key: dict[tuple[int, str], list[PdfImageCandidate]] = {}
+    for candidate in candidates:
+        if candidate.caption:
+            key = (candidate.page, candidate.caption)
+        else:
+            key = (candidate.page, f"uncaptioned-{candidate.index}")
+        if key not in by_key:
+            by_key[key] = []
+            groups.append(by_key[key])
+        by_key[key].append(candidate)
+    return groups
+
+
+def _figure_clip_rect(fitz, page_rect, boxes: list[tuple[float, float, float, float]]):
+    padding = 2.0
+    x0 = max(float(page_rect.x0), min(box[0] for box in boxes) - padding)
+    y0 = max(float(page_rect.y0), min(box[1] for box in boxes) - padding)
+    x1 = min(float(page_rect.x1), max(box[2] for box in boxes) + padding)
+    y1 = min(float(page_rect.y1), max(box[3] for box in boxes) + padding)
+    return fitz.Rect(x0, y0, x1, y1)
+
+
+def _common_caption(candidates: list[PdfImageCandidate]) -> str:
+    for candidate in candidates:
+        if candidate.caption:
+            return candidate.caption
+    return ""
+
+
+def _bbox_area(bbox: tuple[float, float, float, float]) -> float:
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def _horizontal_overlap(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> float:
+    return max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+
+
 def _extract_metadata(lines: list[PdfLine]) -> Metadata:
-    metadata = Metadata()
+    metadata = Metadata(unit_code="")
     for field, labels in FIELD_LABELS.items():
         for line in lines[:120]:
             value = _extract_labeled_value(line.text, labels)
@@ -175,8 +673,12 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
                 method="pdf-text-label",
                 paragraph_index=line.index,
                 page_hint=line.page,
-                confidence=0.7,
+                confidence=0.82,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(line.page),
+                evidence_text=line.text,
+                extractor_rule="pdf-text-label",
             )
             break
 
@@ -198,6 +700,10 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
                 page_hint=guessed.page,
                 confidence=0.4,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(guessed.page),
+                evidence_text=guessed.text,
+                extractor_rule="pdf-title-heuristic",
             )
 
     if not metadata.unit_code:
@@ -207,6 +713,10 @@ def _extract_metadata(lines: list[PdfLine]) -> Metadata:
             method="metadata-default",
             confidence=0.6,
             requires_review=False,
+            source_type="pdf",
+            source_region="default",
+            evidence_text="10006",
+            extractor_rule="metadata-default",
         )
     return metadata
 
@@ -247,8 +757,12 @@ def _apply_cover_metadata_heuristics(metadata: Metadata, lines: list[PdfLine]) -
                 method="pdf-cover-title-anchor",
                 paragraph_index=title_line.index,
                 page_hint=title_line.page,
-                confidence=0.55,
+                confidence=0.82,
                 requires_review=True,
+                source_type="pdf",
+                source_region=_pdf_source_region(title_line.page),
+                evidence_text=title_text,
+                extractor_rule="pdf-cover-title-anchor",
             )
 
 
@@ -269,10 +783,12 @@ def _set_metadata_field(
     line: PdfLine,
     method: str,
 ) -> None:
-    if getattr(metadata, field):
-        return
     cleaned = _clean_metadata_value(field, value)
     if not cleaned:
+        return
+    if getattr(metadata, field) and metadata.evidence.get(field):
+        return
+    if getattr(metadata, field) and str(getattr(metadata, field)) != cleaned:
         return
     setattr(metadata, field, cleaned)
     metadata.evidence[field] = SourceEvidence(
@@ -280,9 +796,29 @@ def _set_metadata_field(
         method=method,
         paragraph_index=line.index,
         page_hint=line.page,
-        confidence=0.55,
+        confidence=_pdf_metadata_confidence(method, line),
         requires_review=True,
+        source_type="pdf",
+        source_region=_pdf_source_region(line.page),
+        evidence_text=line.text,
+        extractor_rule=method,
     )
+
+
+def _pdf_metadata_confidence(method: str, line: PdfLine) -> float:
+    if method in {"pdf-next-line-label", "pdf-vertical-label", "pdf-date-line", "pdf-cover-title-anchor"}:
+        return 0.82 if line.page <= 2 else 0.78
+    if method == "pdf-text-label":
+        return 0.82
+    return 0.7
+
+
+def _pdf_source_region(page: int | None) -> str:
+    if page in {1, 2}:
+        return "cover"
+    if page and page <= 8:
+        return "frontmatter"
+    return "body"
 
 
 def _clean_metadata_value(field: str, value: str) -> str:
@@ -337,12 +873,50 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
     sections: list[ContentBlock] = []
     references: list[ContentBlock] = []
     current_title = "PDF Extracted Text"
+    current_title_page: int | None = None
     current_text: list[str] = []
     in_references = False
+    in_toc = False
 
-    for line in lines:
+    content_lines = _merge_split_headings(_content_lines_without_buaa_cover_spine(lines))
+    index = 0
+    while index < len(content_lines):
+        line = content_lines[index]
+        previous_line = content_lines[index - 1] if index > 0 else None
+        following_line = content_lines[index + 1] if index + 1 < len(content_lines) else None
+        index += 1
         text = line.text
+        if _is_running_header_footer_line(line, previous_line, following_line):
+            continue
         if _is_metadata_line(text):
+            continue
+        if _is_toc_heading(text):
+            _flush_section(sections, current_title, current_text, line)
+            current_title = "PDF Extracted Text"
+            current_title_page = None
+            current_text = []
+            in_toc = True
+            continue
+        if in_toc:
+            following = content_lines[index] if index < len(content_lines) else None
+            if following is not None and _can_merge_numbered_heading(line, following):
+                candidate_text = f"{text} {following.text}"
+                if _looks_like_heading(candidate_text) and not _looks_like_toc_entry(candidate_text):
+                    line = PdfLine(index=line.index, page=line.page, text=candidate_text)
+                    text = candidate_text
+                    index += 1
+                    in_toc = False
+                else:
+                    continue
+            elif not _looks_like_heading(text) or _looks_like_toc_entry(text):
+                continue
+            else:
+                in_toc = False
+        if _is_front_matter_heading(text):
+            _flush_section(sections, current_title, current_text, line)
+            current_title = text
+            current_title_page = line.page
+            current_text = []
             continue
         if text.strip().casefold() in REFERENCE_HEADINGS:
             _flush_section(sections, current_title, current_text, line)
@@ -363,7 +937,10 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
         if _looks_like_heading(text):
             _flush_section(sections, current_title, current_text, line)
             current_title = text
+            current_title_page = line.page
             current_text = []
+            continue
+        if _is_front_matter_spillover(current_title, current_title_page, line):
             continue
         current_text.append(text)
 
@@ -371,6 +948,485 @@ def _extract_content(lines: list[PdfLine]) -> tuple[list[ContentBlock], list[Con
         last = lines[-1] if lines else None
         _flush_section(sections, current_title, current_text, last)
     return sections, references
+
+
+def _extract_tables_from_sections(sections: list[ContentBlock]) -> tuple[list[ContentBlock], list[ContentBlock]]:
+    rendered_sections: list[ContentBlock] = []
+    tables: list[ContentBlock] = []
+    for section in sections:
+        lines = [line for line in str(section.text or "").splitlines()]
+        if not lines:
+            rendered_sections.append(section)
+            continue
+
+        kept_lines: list[str] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index].strip()
+            if not _is_table_caption(line):
+                kept_lines.append(lines[index])
+                index += 1
+                continue
+
+            table_rows: list[str] = []
+            cursor = index + 1
+            while cursor < len(lines) and _is_tabular_text_line(lines[cursor]):
+                table_rows.append(_normalize_table_row(lines[cursor]))
+                cursor += 1
+
+            title = line
+            if len(table_rows) < 2:
+                stacked_table = _stacked_table_after_caption(lines, index)
+                if stacked_table is None:
+                    kept_lines.append(lines[index])
+                    index += 1
+                    continue
+                title, table_rows, cursor = stacked_table
+
+            tables.append(
+                ContentBlock(
+                    id=f"pdf-table-{len(tables) + 1}",
+                    type="table",
+                    title=title,
+                    text="\n".join(table_rows),
+                    level=section.level,
+                    source=_table_source(section),
+                )
+            )
+            index = cursor
+
+        rendered_sections.append(
+            ContentBlock(
+                id=section.id,
+                type=section.type,
+                title=section.title,
+                text="\n".join(line for line in kept_lines if line).strip(),
+                level=section.level,
+                source=section.source,
+            )
+        )
+    return rendered_sections, tables
+
+
+def _is_table_caption(text: str) -> bool:
+    return bool(TABLE_CAPTION_RE.match(str(text or "").strip()))
+
+
+def _stacked_table_after_caption(
+    lines: list[str],
+    caption_index: int,
+) -> tuple[str, list[str], int] | None:
+    caption = str(lines[caption_index]).strip()
+    table_number = _table_number(caption)
+    title_parts: list[str] = []
+    rows: list[str] = []
+    cursor = caption_index + 1
+
+    if cursor < len(lines) and _is_stacked_table_title_line(lines[cursor]):
+        title_parts.append(str(lines[cursor]).strip())
+        cursor += 1
+
+    while cursor < len(lines):
+        line = str(lines[cursor]).strip()
+        if not line:
+            break
+        if _is_table_caption(line) or FIGURE_CAPTION_RE.match(line) or _looks_like_heading(line):
+            break
+        if rows and table_number and _contains_inline_table_reference(line, table_number):
+            break
+        if len(rows) >= 2 and _looks_like_post_table_narrative(line):
+            break
+        rows.append(line)
+        cursor += 1
+
+    if len(rows) < 2:
+        return None
+
+    title = " ".join([caption, *title_parts]).strip()
+    return title, rows, cursor
+
+
+def _is_stacked_table_title_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or _is_table_caption(value) or FIGURE_CAPTION_RE.match(value):
+        return False
+    if _looks_like_heading(value):
+        return False
+    return len(value) <= 50
+
+
+def _contains_inline_table_reference(text: str, table_number: str) -> bool:
+    if _is_table_caption(text):
+        return False
+    return any(_normalize_table_number(match.group(1)) == table_number for match in TABLE_NUMBER_RE.finditer(text))
+
+
+def _looks_like_post_table_narrative(text: str) -> bool:
+    value = str(text or "").strip()
+    if len(value) < 32:
+        return False
+    return any(mark in value for mark in ("。", "，", ",", "."))
+
+
+def _table_number(text: str) -> str:
+    match = TABLE_NUMBER_RE.search(str(text or ""))
+    if not match:
+        return ""
+    return _normalize_table_number(match.group(1))
+
+
+def _normalize_table_number(value: str) -> str:
+    return str(value or "").strip().replace("-", ".")
+
+
+def _is_tabular_text_line(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    return "\t" in value or "|" in value or bool(re.search(r"\S\s{2,}\S", value))
+
+
+def _normalize_table_row(text: str) -> str:
+    value = str(text or "").strip()
+    if "\t" in value:
+        cells = value.split("\t")
+    elif "|" in value:
+        cells = value.strip("|").split("|")
+    else:
+        cells = re.split(r"\s{2,}", value)
+    return "\t".join(cell.strip() for cell in cells if cell.strip())
+
+
+def _table_source(section: ContentBlock) -> SourceEvidence:
+    source = section.source
+    return SourceEvidence(
+        file=SOURCE_PDF_NAME,
+        method="pdf-table-text",
+        paragraph_index=source.paragraph_index if source else None,
+        page_hint=source.page_hint if source else None,
+        confidence=0.55,
+        requires_review=True,
+    )
+
+
+def _extract_equations_from_sections(
+    sections: list[ContentBlock],
+) -> tuple[list[ContentBlock], list[EquationItem]]:
+    rendered_sections: list[ContentBlock] = []
+    equations: list[EquationItem] = []
+    for section in sections:
+        kept_lines: list[str] = []
+        for line in str(section.text or "").splitlines():
+            text = _clean_text(line)
+            if _looks_like_equation_line(text):
+                equations.append(_equation_from_pdf_line(text, section, len(equations) + 1))
+            else:
+                kept_lines.append(line)
+
+        rendered_sections.append(
+            ContentBlock(
+                id=section.id,
+                type=section.type,
+                title=section.title,
+                text="\n".join(line for line in kept_lines if str(line).strip()).strip(),
+                level=section.level,
+                source=section.source,
+            )
+        )
+    return rendered_sections, equations
+
+
+def _extract_page_equation_regions(page, work_dir: Path, page_number: int, starting_number: int) -> list[EquationItem]:
+    try:
+        layout = page.get_text("dict") or {}
+    except Exception:
+        return []
+    records: list[dict[str, Any]] = []
+    for block in layout.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            spans = [span for span in line.get("spans", []) if str(span.get("text") or "").strip()]
+            if not spans:
+                continue
+            text = "".join(str(span.get("text") or "") for span in spans).strip()
+            records.append({"bbox": tuple(line.get("bbox") or (0, 0, 0, 0)), "text": text, "spans": spans})
+    page_width = float(getattr(getattr(page, "rect", None), "width", 0.0) or 0.0)
+    anchors = [
+        record
+        for record in records
+        if PDF_EQUATION_NUMBER_RE.fullmatch(record["text"])
+        and float(record["bbox"][0]) >= page_width * 0.65
+    ]
+    if not anchors:
+        return []
+    output_dir = work_dir / "pdf-equations"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    equations: list[EquationItem] = []
+    for offset, anchor in enumerate(anchors):
+        match = PDF_EQUATION_NUMBER_RE.fullmatch(anchor["text"])
+        if match is None:
+            continue
+        anchor_bbox = tuple(float(value) for value in anchor["bbox"])
+        eligible: list[dict[str, Any]] = []
+        for record in records:
+            for span in record["spans"]:
+                span_text = str(span.get("text") or "").strip()
+                span_bbox = tuple(float(value) for value in span.get("bbox") or (0, 0, 0, 0))
+                if not span_text or span_bbox[2] >= anchor_bbox[0] - 3:
+                    continue
+                if span_bbox[3] < anchor_bbox[1] - 55 or span_bbox[1] > anchor_bbox[3] + 55:
+                    continue
+                if not _is_pdf_math_span(span_text, str(span.get("font") or "")):
+                    continue
+                eligible.append({"text": span_text, "bbox": span_bbox})
+        selected = _vertical_formula_cluster(eligible, anchor_bbox)
+        if not selected:
+            continue
+        x0 = min(item["bbox"][0] for item in selected)
+        y0 = min(item["bbox"][1] for item in selected)
+        x1 = max(item["bbox"][2] for item in selected)
+        y1 = max(item["bbox"][3] for item in selected)
+        if x1 - x0 < 8 or y1 - y0 < 5:
+            continue
+        clip = _bounded_pdf_rect(page, x0 - 6, y0 - 2, min(x1 + 6, anchor_bbox[0] - 5), y1 + 2)
+        if clip is None:
+            continue
+        number = match.group(1)
+        safe_number = re.sub(r"[^0-9A-Za-z.-]", "_", number)
+        equation_id = f"pdf-region-p{page_number:03d}-{safe_number}"
+        preview = output_dir / f"{equation_id}.png"
+        try:
+            pixmap = page.get_pixmap(matrix=_fitz_matrix(300 / 72), clip=clip, alpha=False)
+            pixmap.save(str(preview))
+        except Exception:
+            continue
+        source_text = " ".join(
+            item["text"]
+            for item in sorted(selected, key=lambda value: (round(value["bbox"][1], 1), value["bbox"][0]))
+        )
+        equations.append(
+            EquationItem(
+                id=equation_id,
+                kind="pdf-image-equation",
+                text=source_text,
+                number=f"({number})",
+                preview_path=str(preview.resolve()),
+                region_bbox=[round(float(value), 3) for value in (clip.x0, clip.y0, clip.x1, clip.y1)],
+                source=SourceEvidence(
+                    file=SOURCE_PDF_NAME,
+                    method="pdf-equation-region",
+                    page_hint=page_number,
+                    confidence=0.9,
+                    requires_review=True,
+                ),
+                requires_review=True,
+            )
+        )
+    return equations
+
+
+def _is_pdf_math_span(text: str, font: str) -> bool:
+    value = str(text or "").strip()
+    if not value or PDF_EQUATION_NUMBER_RE.fullmatch(value):
+        return False
+    if any("\ue000" <= char <= "\uf8ff" for char in value):
+        return True
+    normalized_font = str(font or "").casefold()
+    if any(marker in normalized_font for marker in PDF_MATH_FONT_MARKERS):
+        return not bool(re.search(r"[\u3400-\u9fff]", value))
+    return not re.search(r"[\u3400-\u9fff]", value) and bool(
+        re.search(r"[A-Za-z0-9=+\-*/^_(),.\[\]{}]", value)
+    )
+
+
+def _vertical_formula_cluster(items: list[dict[str, Any]], anchor_bbox: tuple[float, float, float, float]) -> list[dict[str, Any]]:
+    selected = [item for item in items if _vertical_intersects(item["bbox"], anchor_bbox, padding=3)]
+    if not selected:
+        return []
+    changed = True
+    while changed:
+        changed = False
+        top = min(item["bbox"][1] for item in selected)
+        bottom = max(item["bbox"][3] for item in selected)
+        cluster = (0.0, top, 0.0, bottom)
+        for item in items:
+            if item in selected or not _vertical_intersects(item["bbox"], cluster, padding=3):
+                continue
+            selected.append(item)
+            changed = True
+    return selected
+
+
+def _vertical_intersects(left: tuple[float, float, float, float], right: tuple[float, float, float, float], *, padding: float) -> bool:
+    return float(left[3]) >= float(right[1]) - padding and float(left[1]) <= float(right[3]) + padding
+
+
+def _bounded_pdf_rect(page, x0: float, y0: float, x1: float, y1: float):
+    try:
+        import fitz
+    except ImportError:
+        return None
+    page_rect = page.rect
+    rect = fitz.Rect(
+        max(float(page_rect.x0), x0),
+        max(float(page_rect.y0), y0),
+        min(float(page_rect.x1), x1),
+        min(float(page_rect.y1), y1),
+    )
+    return rect if rect.width > 1 and rect.height > 1 else None
+
+
+def _fitz_matrix(scale: float):
+    import fitz
+
+    return fitz.Matrix(scale, scale)
+
+
+def _merge_pdf_equation_sources(
+    parsed_equations: list[EquationItem],
+    positioned_equations: list[EquationItem],
+) -> list[EquationItem]:
+    merged = list(parsed_equations)
+    parsed_keys = {
+        (str(item.number or ""), item.source.page_hint if item.source else None)
+        for item in parsed_equations
+        if item.number
+    }
+    for equation in positioned_equations:
+        key = (str(equation.number or ""), equation.source.page_hint if equation.source else None)
+        if key in parsed_keys:
+            continue
+        parsed_keys.add(key)
+        merged.append(equation)
+    return merged
+
+
+def _looks_like_equation_line(text: str) -> bool:
+    value = _clean_text(text)
+    if not (3 <= len(value) <= 180):
+        return False
+    if _looks_like_heading(value) or _is_table_caption(value) or FIGURE_CAPTION_RE.match(value):
+        return False
+    if re.search(r"[。；;，,]\s*$", value):
+        return False
+    if not re.search(r"[A-Za-z][A-Za-z0-9_{}()]*\s*(?:=|≈|<=|>=|≤|≥)", value):
+        return False
+    operator_count = len(re.findall(r"(?:=|≈|<=|>=|≤|≥|\+|-|\*|/|\^|_|\{|\})", value))
+    if operator_count < 2:
+        return False
+    word_count = len(re.findall(r"[A-Za-z]+", value))
+    return word_count <= 18
+
+
+def _equation_from_pdf_line(text: str, section: ContentBlock, number: int) -> EquationItem:
+    equation_text = _clean_text(text)
+    equation_number = _extract_equation_number(equation_text)
+    latex = equation_text
+    if equation_number:
+        latex = _clean_text(latex[: -len(equation_number)])
+    omml = latex_to_omml(latex)
+    requires_review = not bool(omml)
+
+    return EquationItem(
+        id=f"pdf-equation-{number}",
+        kind="pdf-text-equation",
+        text=equation_text,
+        number=equation_number,
+        latex=latex,
+        omml=omml,
+        source=_equation_source(section, requires_review=requires_review),
+        requires_review=requires_review,
+    )
+
+
+def _extract_equation_number(text: str) -> str:
+    match = re.search(r"\((\d+(?:\.\d+)*)\)\s*$", str(text or "").strip())
+    return match.group(0) if match else ""
+
+
+def _equation_source(section: ContentBlock, *, requires_review: bool) -> SourceEvidence:
+    source = section.source
+    return SourceEvidence(
+        file=SOURCE_PDF_NAME,
+        method="pdf-equation-text",
+        paragraph_index=source.paragraph_index if source else None,
+        page_hint=source.page_hint if source else None,
+        confidence=0.5 if requires_review else 0.82,
+        requires_review=requires_review,
+    )
+
+
+def _merge_split_headings(lines: list[PdfLine]) -> list[PdfLine]:
+    merged: list[PdfLine] = []
+    index = 0
+    while index < len(lines):
+        current = lines[index]
+        following = lines[index + 1] if index + 1 < len(lines) else None
+        pair = (current.text, following.text) if following is not None else None
+        if following is not None and pair in SPLIT_HEADING_PAIRS:
+            merged.append(
+                PdfLine(
+                    index=current.index,
+                    page=current.page,
+                    text=SPLIT_HEADING_PAIRS[pair],
+                )
+            )
+            index += 2
+            continue
+        merged.append(current)
+        index += 1
+    return merged
+
+
+def _can_merge_numbered_heading(current: PdfLine, following: PdfLine) -> bool:
+    if current.page != following.page:
+        return False
+    if not re.fullmatch(r"\d+", current.text.strip()):
+        return False
+    if not following.text.strip() or re.match(r"^\d", following.text.strip()):
+        return False
+    return len(following.text.strip()) <= 80
+
+
+def _content_lines_without_buaa_cover_spine(lines: list[PdfLine]) -> list[PdfLine]:
+    if not _looks_like_buaa_cover_with_spine(lines):
+        return lines
+
+    start_index = _first_line_after_buaa_cover_spine(lines)
+    if start_index is None:
+        return lines
+    return lines[start_index:]
+
+
+def _looks_like_buaa_cover_with_spine(lines: list[PdfLine]) -> bool:
+    first_lines = lines[:160]
+    has_cover_anchor = any(line.text in TITLE_ANCHORS for line in first_lines)
+    has_spine_marker = any(BUAA_SPINE_MARKER in line.text for line in first_lines)
+    return has_cover_anchor and has_spine_marker
+
+
+def _first_line_after_buaa_cover_spine(lines: list[PdfLine]) -> int | None:
+    for index, line in enumerate(lines):
+        if line.page <= 2:
+            continue
+        if line.text == "北京航空航天大学" and _next_line_contains(lines, index, BUAA_TASK_BOOK_TITLE):
+            return index
+        if BUAA_TASK_BOOK_TITLE in line.text:
+            return max(0, index - 1) if index > 0 and lines[index - 1].text == "北京航空航天大学" else index
+        if line.text in {"摘 要", "摘要", "ABSTRACT", "Abstract"}:
+            return index
+        if line.page > 2 and _looks_like_heading(line.text):
+            return index
+
+    for index, line in enumerate(lines):
+        if line.page > 2:
+            return index
+    return None
+
+
+def _next_line_contains(lines: list[PdfLine], index: int, text: str) -> bool:
+    return index + 1 < len(lines) and text in lines[index + 1].text
 
 
 def _flush_section(
@@ -382,13 +1438,14 @@ def _flush_section(
     text = "\n".join(line for line in text_lines if line).strip()
     if not text and title == "PDF Extracted Text":
         return
+    level = _heading_level(title) if _looks_like_heading(title) else 1
     sections.append(
         ContentBlock(
             id=f"section-{len(sections) + 1}",
-            type="chapter" if _looks_like_heading(title) else "section",
+            type="chapter" if level == 1 and _looks_like_heading(title) else "section",
             title=title,
             text=text,
-            level=1,
+            level=level,
             source=_line_source(evidence_line, "pdf-section-text") if evidence_line else None,
         )
     )
@@ -419,6 +1476,61 @@ def _metadata_warnings(metadata: Metadata) -> list[str]:
 
 def _looks_like_heading(text: str) -> bool:
     return bool(re.match(r"^\s*\d+(?:\.\d+)*\s+\S+", text))
+
+
+def _heading_level(text: str) -> int:
+    match = re.match(r"^\s*(\d+(?:\.\d+)*)\s+\S+", text)
+    if not match:
+        return 1
+    return match.group(1).count(".") + 1
+
+
+def _is_toc_heading(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+    return normalized in {heading.casefold() for heading in TOC_HEADINGS}
+
+
+def _looks_like_toc_entry(text: str) -> bool:
+    return bool(re.search(r"(?:\.{3,}|…{2,}|·{3,})\s*\d+\s*$", str(text or "")))
+
+
+def _is_front_matter_heading(text: str) -> bool:
+    return str(text or "").strip() in FRONT_MATTER_HEADINGS
+
+
+def _is_front_matter_spillover(title: str, title_page: int | None, line: PdfLine) -> bool:
+    if title_page is None:
+        return False
+    if title == "本人声明":
+        return line.page != title_page
+    if title == "摘要":
+        return line.page != title_page and not _contains_cjk(line.text)
+    return False
+
+
+def _is_running_header_footer_line(
+    line: PdfLine,
+    previous_line: PdfLine | None,
+    following_line: PdfLine | None,
+) -> bool:
+    text = str(line.text or "").strip()
+    if any(text.startswith(prefix) for prefix in RUNNING_HEADER_PREFIXES):
+        return True
+    if text in PAGE_NUMBER_MARKERS:
+        return True
+    if not (_is_plain_page_number(text) or _is_roman_page_number(text)):
+        return False
+    previous_text = str(previous_line.text or "").strip() if previous_line else ""
+    following_text = str(following_line.text or "").strip() if following_line else ""
+    return previous_text in PAGE_NUMBER_MARKERS or following_text in PAGE_NUMBER_MARKERS
+
+
+def _is_plain_page_number(text: str) -> bool:
+    return bool(re.fullmatch(r"\d{1,4}", text))
+
+
+def _is_roman_page_number(text: str) -> bool:
+    return bool(re.fullmatch(r"[IVXLCDM]{1,8}", text, flags=re.IGNORECASE))
 
 
 def _is_metadata_line(text: str) -> bool:
@@ -460,7 +1572,7 @@ def _contains_cjk(text: str) -> bool:
 
 
 def _clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text).replace("\u3000", " ")).strip()
+    return re.sub(r"[^\S\t]+", " ", str(text).replace("\u3000", " ")).strip()
 
 
-__all__ = ["extract_pdf_model"]
+__all__ = ["OcrResult", "extract_pdf_model"]

@@ -1,23 +1,45 @@
 from __future__ import annotations
 
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
+from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.shared import Inches, Mm, Pt
+from lxml import etree
 
 from buaa_thesis_kit.models import AssetItem, ContentBlock, EquationItem, ThesisModel
 
 
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
-BLOCK_PLACEHOLDERS = {"BODY", "REFERENCES", "TABLES", "FIGURES", "EQUATIONS", "APPENDICES"}
+BLOCK_PLACEHOLDERS = {"BODY", "REFERENCES", "TABLES", "FIGURES", "EQUATIONS", "APPENDICES", "TOC"}
 SUPPORTED_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+OCR_EVIDENCE_FIGURE_TYPES = {"pdf-page-image"}
+EQUATION_OBJECT_TOKEN_PREFIX = "__BUAA_EDITABLE_EQUATION_OBJECT__"
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+IMAGE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+OLE_OBJECT_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+OLE_OBJECT_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.oleObject"
+IMAGE_CONTENT_TYPES = {
+    ".bmp": "image/bmp",
+    ".emf": "image/x-emf",
+    ".gif": "image/gif",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".wmf": "image/x-wmf",
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +58,14 @@ class RenderedTable:
 @dataclass(frozen=True)
 class RenderedFigure:
     figure: AssetItem
+
+
+@dataclass(frozen=True)
+class RenderedEquation:
+    equation: EquationItem
+
+
+RenderedItem = RenderedParagraph | RenderedTable | RenderedFigure | RenderedEquation
 
 
 def fill_word_template(template_path: Path, model: ThesisModel, output_path: Path) -> None:
@@ -58,6 +88,7 @@ def fill_word_template(template_path: Path, model: ThesisModel, output_path: Pat
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document.save(str(output_path))
+    finalize_equation_objects(output_path, model.equations)
 
 
 def _document_has_placeholders(document) -> bool:
@@ -89,8 +120,8 @@ def _has_block_placeholder(text: str) -> bool:
     return any(match.group(1) in BLOCK_PLACEHOLDERS for match in PLACEHOLDER_RE.finditer(text))
 
 
-def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedParagraph | RenderedTable | RenderedFigure]:
-    rendered: list[RenderedParagraph | RenderedTable | RenderedFigure] = []
+def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedItem]:
+    rendered: list[RenderedItem] = []
     cursor = 0
     for match in PLACEHOLDER_RE.finditer(text):
         leading = text[cursor : match.start()]
@@ -116,9 +147,11 @@ def _render_placeholder_items(text: str, model: ThesisModel) -> list[RenderedPar
     return rendered
 
 
-def _render_block_placeholder(token: str, model: ThesisModel) -> list[RenderedParagraph | RenderedTable | RenderedFigure]:
+def _render_block_placeholder(token: str, model: ThesisModel) -> list[RenderedItem]:
     if token == "BODY":
         return _render_sections(model.sections)
+    if token == "TOC":
+        return []
     if token == "REFERENCES":
         return _render_references(model.references)
     if token == "TABLES":
@@ -216,7 +249,7 @@ def _remove_unresolved_placeholders_preserving_spacing(text: str) -> str:
 
 def _replace_paragraph_with_items(
     paragraph: Paragraph,
-    rendered: list[RenderedParagraph | RenderedTable | RenderedFigure],
+    rendered: list[RenderedItem],
 ) -> None:
     if not rendered:
         _replace_paragraph_text(paragraph, "")
@@ -249,7 +282,7 @@ def _insert_paragraph_after_anchor(paragraph: Paragraph, anchor) -> Paragraph:
 def _insert_item_after_anchor(
     paragraph: Paragraph,
     anchor,
-    item: RenderedParagraph | RenderedTable | RenderedFigure,
+    item: RenderedItem,
 ):
     if isinstance(item, RenderedParagraph):
         inserted = _insert_paragraph_after_anchor(paragraph, anchor)
@@ -257,7 +290,9 @@ def _insert_item_after_anchor(
         return inserted._p
     if isinstance(item, RenderedTable):
         return _insert_table_after_anchor(paragraph, anchor, item.block)
-    return _insert_figure_after_anchor(paragraph, anchor, item.figure)
+    if isinstance(item, RenderedFigure):
+        return _insert_figure_after_anchor(paragraph, anchor, item.figure)
+    return _insert_equation_after_anchor(paragraph, anchor, item.equation)
 
 
 def _insert_table_after_anchor(paragraph: Paragraph, anchor, table_block: ContentBlock):
@@ -287,14 +322,18 @@ def _insert_table_after_anchor(paragraph: Paragraph, anchor, table_block: Conten
 
 
 def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem):
+    if _is_resolved_ocr_evidence_figure(figure):
+        return anchor
     image_path = Path(figure.path) if figure.path else None
     caption = _figure_caption(figure)
-    if image_path and _is_supported_existing_image(image_path):
+    if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
         picture = _insert_paragraph_after_anchor(paragraph, anchor)
         try:
             picture.add_run().add_picture(str(image_path), width=Inches(5.5))
-            label = _insert_paragraph_after_anchor(paragraph, anchor)
-            _replace_paragraph_text(label, f"[Figure inserted] {caption}".strip())
+            if caption:
+                label = _insert_paragraph_after_anchor(paragraph, picture._p)
+                _replace_paragraph_text(label, caption)
+                return label._p
             return picture._p
         except Exception:
             _replace_paragraph_text(picture, _figure_review_text(figure))
@@ -303,6 +342,12 @@ def _insert_figure_after_anchor(paragraph: Paragraph, anchor, figure: AssetItem)
     review = _insert_paragraph_after_anchor(paragraph, anchor)
     _replace_paragraph_text(review, _figure_review_text(figure))
     return review._p
+
+
+def _insert_equation_after_anchor(paragraph: Paragraph, anchor, equation: EquationItem):
+    inserted = _insert_paragraph_after_anchor(paragraph, anchor)
+    _apply_equation(inserted, equation)
+    return inserted._p
 
 
 def _apply_rendered_paragraph(paragraph: Paragraph, rendered: RenderedParagraph) -> None:
@@ -325,6 +370,7 @@ def _replace_paragraph_text(paragraph: Paragraph, text: str) -> None:
 def _build_fallback_document(document, model: ThesisModel) -> None:
     _add_title_block(document, model)
     _add_abstracts(document, model)
+    _add_table_of_contents(document, model.sections)
     _add_sections(document, model.sections)
     _add_tables(document, model.tables)
     _add_figures(document, model.figures)
@@ -345,11 +391,23 @@ def _append_missing_abstracts(document, model: ThesisModel, represented_placehol
     abstract_cn = _front_matter_value(model, "chinese_abstract", "abstract_cn", "cn_abstract")
     abstract_en = _front_matter_value(model, "english_abstract", "abstract_en", "en_abstract")
     if abstract_cn and "ABSTRACT_CN" not in represented_placeholders:
-        _add_heading(document, "Chinese Abstract", level=1)
+        _add_front_matter_heading(document, "摘    要")
         _add_text_paragraphs(document, abstract_cn)
+        _add_keywords(
+            document,
+            "关键词：",
+            _front_matter_value(model, "keywords_cn", "chinese_keywords", "cn_keywords", "keywords"),
+        )
     if abstract_en and "ABSTRACT_EN" not in represented_placeholders:
-        _add_heading(document, "English Abstract", level=1)
+        if abstract_cn:
+            document.add_page_break()
+        _add_front_matter_heading(document, "Abstract")
         _add_text_paragraphs(document, abstract_en)
+        _add_keywords(
+            document,
+            "Key Words: ",
+            _front_matter_value(model, "keywords_en", "english_keywords", "en_keywords", "keywords"),
+        )
 
 
 def _append_block(document, token: str, model: ThesisModel) -> None:
@@ -402,11 +460,23 @@ def _add_abstracts(document, model: ThesisModel) -> None:
     abstract_cn = _front_matter_value(model, "chinese_abstract", "abstract_cn", "cn_abstract")
     abstract_en = _front_matter_value(model, "english_abstract", "abstract_en", "en_abstract")
     if abstract_cn:
-        _add_heading(document, "Chinese Abstract", level=1)
+        _add_front_matter_heading(document, "摘    要")
         _add_text_paragraphs(document, abstract_cn)
+        _add_keywords(
+            document,
+            "关键词：",
+            _front_matter_value(model, "keywords_cn", "chinese_keywords", "cn_keywords", "keywords"),
+        )
     if abstract_en:
-        _add_heading(document, "English Abstract", level=1)
+        if abstract_cn:
+            document.add_page_break()
+        _add_front_matter_heading(document, "Abstract")
         _add_text_paragraphs(document, abstract_en)
+        _add_keywords(
+            document,
+            "Key Words: ",
+            _front_matter_value(model, "keywords_en", "english_keywords", "en_keywords", "keywords"),
+        )
 
 
 def _add_sections(document, sections: Iterable[ContentBlock]) -> None:
@@ -435,13 +505,16 @@ def _add_tables(document, tables: Iterable[ContentBlock]) -> None:
 
 def _add_figures(document, figures: Iterable[AssetItem]) -> None:
     for figure in figures:
+        if _is_resolved_ocr_evidence_figure(figure):
+            continue
         image_path = Path(figure.path) if figure.path else None
         caption = _figure_caption(figure)
-        if image_path and _is_supported_existing_image(image_path):
+        if image_path and _is_supported_existing_image(image_path) and not _is_ocr_evidence_figure(figure):
             picture = document.add_paragraph()
             try:
                 picture.add_run().add_picture(str(image_path), width=Inches(5.5))
-                document.add_paragraph(f"[Figure inserted] {caption}".strip())
+                if caption:
+                    document.add_paragraph(caption)
             except Exception:
                 _replace_paragraph_text(picture, _figure_review_text(figure))
         else:
@@ -450,14 +523,18 @@ def _add_figures(document, figures: Iterable[AssetItem]) -> None:
 
 def _add_equations(document, equations: Iterable[EquationItem]) -> None:
     for item in _render_equations(equations):
-        document.add_paragraph(item.text)
+        paragraph = document.add_paragraph()
+        if isinstance(item, RenderedEquation):
+            _apply_equation(paragraph, item.equation)
+        else:
+            _apply_rendered_paragraph(paragraph, item)
 
 
 def _add_references(document, references: Iterable[ContentBlock]) -> None:
     references = list(references)
     if not references:
         return
-    _add_heading(document, "References", level=1)
+    _add_heading(document, "参考文献", level=1)
     for item in _render_references(references):
         document.add_paragraph(item.text)
 
@@ -502,14 +579,282 @@ def _render_figures_as_review_paragraphs(figures: Iterable[AssetItem]) -> list[R
     return [RenderedParagraph(_figure_review_text(figure)) for figure in figures]
 
 
-def _render_equations(equations: Iterable[EquationItem]) -> list[RenderedParagraph]:
-    rendered: list[RenderedParagraph] = []
+def _render_equations(equations: Iterable[EquationItem]) -> list[RenderedEquation | RenderedParagraph]:
+    rendered: list[RenderedEquation | RenderedParagraph] = []
     for equation in equations:
-        content = equation.latex or equation.text or "manual conversion required"
-        number = f" {equation.number}" if equation.number else ""
-        prefix = "[Equation requires review]" if equation.requires_review else "[Equation]"
-        rendered.append(RenderedParagraph(f"{prefix}{number} {content}".strip()))
+        if equation.omml.strip() or _has_preserved_ole_equation(equation) or equation.preview_path:
+            rendered.append(RenderedEquation(equation))
+        else:
+            rendered.append(RenderedParagraph(_equation_review_text(equation)))
     return rendered
+
+
+def _apply_equation(paragraph: Paragraph, equation: EquationItem) -> None:
+    omml = equation.omml.strip()
+    if omml:
+        try:
+            paragraph.clear()
+            paragraph._p.append(parse_xml(omml))
+            if equation.number:
+                paragraph.add_run(f" {equation.number}")
+            return
+        except Exception:
+            pass
+    if _has_preserved_ole_equation(equation):
+        _replace_paragraph_text(paragraph, _equation_object_token(equation))
+        return
+    preview_path = Path(equation.preview_path) if equation.preview_path else None
+    if preview_path is not None and _is_supported_existing_image(preview_path):
+        try:
+            paragraph.clear()
+            paragraph.add_run().add_picture(str(preview_path), width=Inches(4.8))
+            return
+        except Exception:
+            pass
+    _replace_paragraph_text(paragraph, _equation_review_text(equation))
+
+
+def finalize_equation_objects(docx_path: Path, equations: Iterable[EquationItem]) -> None:
+    """Patch preserved Word/MathType OLE equations into a saved DOCX package."""
+    equations_by_token = {
+        _equation_object_token(equation): equation
+        for equation in equations
+        if _has_preserved_ole_equation(equation)
+    }
+    if not equations_by_token:
+        return
+
+    docx_path = Path(docx_path)
+    if not docx_path.exists():
+        return
+
+    patched_path = docx_path.with_name(f"{docx_path.stem}.equation-objects{docx_path.suffix}")
+    additional_parts: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(docx_path, "r") as package:
+            package_names = set(package.namelist())
+            document_root = etree.fromstring(package.read("word/document.xml"))
+            rels_xml = (
+                package.read("word/_rels/document.xml.rels")
+                if "word/_rels/document.xml.rels" in package_names
+                else b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
+            )
+            rels_root = etree.fromstring(rels_xml)
+            content_types_root = etree.fromstring(package.read("[Content_Types].xml"))
+
+            next_rel_index = _next_relationship_index(rels_root)
+            changed = False
+            for token, equation in equations_by_token.items():
+                paragraph = _find_token_paragraph(document_root, token)
+                if paragraph is None:
+                    continue
+                try:
+                    next_rel_index = _patch_equation_object(
+                        paragraph,
+                        equation,
+                        rels_root,
+                        content_types_root,
+                        package_names | set(additional_parts),
+                        additional_parts,
+                        next_rel_index,
+                    )
+                except Exception:
+                    _replace_package_paragraph_text(paragraph, _equation_review_text(equation))
+                changed = True
+
+            if not changed:
+                return
+
+            document_xml = _serialize_xml(document_root)
+            rels_xml = _serialize_xml(rels_root)
+            content_types_xml = _serialize_xml(content_types_root)
+
+            with zipfile.ZipFile(patched_path, "w") as target:
+                for info in package.infolist():
+                    if info.filename == "word/document.xml":
+                        target.writestr(info, document_xml)
+                    elif info.filename == "word/_rels/document.xml.rels":
+                        target.writestr(info, rels_xml)
+                    elif info.filename == "[Content_Types].xml":
+                        target.writestr(info, content_types_xml)
+                    elif info.filename not in additional_parts:
+                        target.writestr(info, package.read(info.filename))
+                if "word/_rels/document.xml.rels" not in package_names:
+                    target.writestr("word/_rels/document.xml.rels", rels_xml)
+                for part_name, payload in additional_parts.items():
+                    target.writestr(part_name, payload)
+        patched_path.replace(docx_path)
+    finally:
+        if patched_path.exists():
+            patched_path.unlink()
+
+
+def _patch_equation_object(
+    paragraph,
+    equation: EquationItem,
+    rels_root,
+    content_types_root,
+    package_names: set[str],
+    additional_parts: dict[str, bytes],
+    next_rel_index: int,
+) -> int:
+    object_path = Path(equation.object_path)
+    object_xml = equation.object_xml.strip()
+    if not object_path.exists() or not object_xml:
+        _replace_package_paragraph_text(paragraph, _equation_review_text(equation))
+        return next_rel_index
+
+    object_node = etree.fromstring(object_xml.encode("utf-8"))
+    if etree.QName(object_node).localname == "r":
+        run_node = object_node
+    else:
+        run_node = etree.Element(f"{{{W_NS}}}r")
+        run_node.append(object_node)
+
+    object_rel_id = f"rIdBuaaEquationObject{next_rel_index}"
+    next_rel_index += 1
+    stem = _safe_equation_package_stem(equation)
+    object_suffix = object_path.suffix.lower() or ".bin"
+    object_part_name = _unique_package_part_name(
+        package_names | set(additional_parts),
+        f"word/embeddings/{stem}{object_suffix}",
+    )
+    additional_parts[object_part_name] = object_path.read_bytes()
+    _add_relationship(
+        rels_root,
+        object_rel_id,
+        OLE_OBJECT_REL_TYPE,
+        object_part_name.removeprefix("word/"),
+    )
+    _ensure_default_content_type(content_types_root, object_suffix, OLE_OBJECT_CONTENT_TYPE)
+    for ole_node in run_node.xpath(".//*[local-name()='OLEObject']"):
+        ole_node.set(f"{{{R_NS}}}id", object_rel_id)
+
+    preview_path = Path(equation.preview_path) if equation.preview_path else None
+    if preview_path is not None and preview_path.exists():
+        image_rel_id = f"rIdBuaaEquationPreview{next_rel_index}"
+        next_rel_index += 1
+        image_suffix = preview_path.suffix.lower() or ".png"
+        image_part_name = _unique_package_part_name(
+            package_names | set(additional_parts),
+            f"word/media/{stem}{image_suffix}",
+        )
+        additional_parts[image_part_name] = preview_path.read_bytes()
+        _add_relationship(
+            rels_root,
+            image_rel_id,
+            IMAGE_REL_TYPE,
+            image_part_name.removeprefix("word/"),
+        )
+        _ensure_default_content_type(
+            content_types_root,
+            image_suffix,
+            IMAGE_CONTENT_TYPES.get(image_suffix, "application/octet-stream"),
+        )
+        for image_node in run_node.xpath(".//*[local-name()='imagedata']"):
+            image_node.set(f"{{{R_NS}}}id", image_rel_id)
+
+    _replace_package_paragraph_with_run(paragraph, run_node)
+    return next_rel_index
+
+
+def _has_preserved_ole_equation(equation: EquationItem) -> bool:
+    return bool(equation.object_xml.strip() and equation.object_path and Path(equation.object_path).exists())
+
+
+def _equation_object_token(equation: EquationItem) -> str:
+    return f"{EQUATION_OBJECT_TOKEN_PREFIX}{_safe_equation_package_stem(equation)}__"
+
+
+def _safe_equation_package_stem(equation: EquationItem) -> str:
+    value = equation.id or equation.text or "equation"
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", value).strip("._")
+    return f"buaa-equation-{safe or 'equation'}"
+
+
+def _find_token_paragraph(root, token: str):
+    for text_node in root.xpath(".//*[local-name()='t']"):
+        if text_node.text != token:
+            continue
+        paragraph = text_node
+        while paragraph is not None and etree.QName(paragraph).localname != "p":
+            paragraph = paragraph.getparent()
+        return paragraph
+    return None
+
+
+def _replace_package_paragraph_with_run(paragraph, run_node) -> None:
+    _clear_package_paragraph(paragraph)
+    paragraph.append(run_node)
+
+
+def _replace_package_paragraph_text(paragraph, text: str) -> None:
+    _clear_package_paragraph(paragraph)
+    run = etree.SubElement(paragraph, f"{{{W_NS}}}r")
+    text_node = etree.SubElement(run, f"{{{W_NS}}}t")
+    text_node.text = text
+
+
+def _clear_package_paragraph(paragraph) -> None:
+    for child in list(paragraph):
+        if child.tag != f"{{{W_NS}}}pPr":
+            paragraph.remove(child)
+
+
+def _add_relationship(rels_root, rel_id: str, relationship_type: str, target: str) -> None:
+    relationship = etree.SubElement(rels_root, f"{{{REL_NS}}}Relationship")
+    relationship.set("Id", rel_id)
+    relationship.set("Type", relationship_type)
+    relationship.set("Target", target)
+
+
+def _next_relationship_index(rels_root) -> int:
+    highest = 0
+    for relationship in rels_root.xpath(".//*[local-name()='Relationship']"):
+        rel_id = relationship.get("Id") or ""
+        match = re.search(r"(\d+)$", rel_id)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
+def _ensure_default_content_type(content_types_root, suffix: str, content_type: str) -> None:
+    extension = suffix.lower().lstrip(".")
+    for node in content_types_root.xpath(".//*[local-name()='Default']"):
+        if (node.get("Extension") or "").lower() == extension:
+            return
+    default = etree.SubElement(content_types_root, f"{{{CONTENT_TYPES_NS}}}Default")
+    default.set("Extension", extension)
+    default.set("ContentType", content_type)
+
+
+def _unique_package_part_name(existing_names: set[str], desired_name: str) -> str:
+    path = Path(desired_name)
+    parent = path.parent.as_posix()
+    suffix = path.suffix
+    stem = path.stem
+    candidate = desired_name
+    counter = 2
+    while candidate in existing_names:
+        candidate = f"{parent}/{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def _serialize_xml(root) -> bytes:
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _equation_review_text(equation: EquationItem) -> str:
+    page = ""
+    if equation.source is not None and equation.source.page_hint is not None:
+        page = f"source_page={equation.source.page_hint}, "
+    number = f"{equation.number}，" if equation.number else ""
+    return f"[公式缺失：{number}{page}needs_review]"
+
+
+def _equation_caption(equation: EquationItem) -> str:
+    return equation.text or equation.number or equation.id
 
 
 def _render_appendices(appendices: Iterable[ContentBlock]) -> list[RenderedParagraph]:
@@ -535,20 +880,37 @@ def _parse_table_rows(text: str) -> list[list[str]]:
 
 
 def _figure_caption(figure: AssetItem) -> str:
-    parts = [figure.caption, figure.path]
-    return " ".join(part for part in parts if part)
+    return str(figure.caption or figure.id or "").strip()
 
 
 def _figure_review_text(figure: AssetItem) -> str:
-    return f"[Figure requires review] {_figure_caption(figure)}".strip()
+    if _is_ocr_evidence_figure(figure):
+        page = ""
+        if figure.source is not None and figure.source.page_hint is not None:
+            page = f"source_page={figure.source.page_hint}, "
+        return f"[OCR文字缺失：{page}需人工确认]"
+    caption = _figure_caption(figure) or "未识别图题"
+    return f"[图像缺失：{caption}，需人工确认]"
 
 
 def _is_supported_existing_image(path: Path) -> bool:
     return path.exists() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
 
 
+def _is_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return str(figure.type or "").strip().lower() in OCR_EVIDENCE_FIGURE_TYPES
+
+
+def _is_resolved_ocr_evidence_figure(figure: AssetItem) -> bool:
+    return _is_ocr_evidence_figure(figure) and not figure.requires_review
+
+
 def _heading_style(level: int) -> str:
-    return "Heading 1" if level <= 1 else "Heading 2"
+    if level <= 1:
+        return "Heading 1"
+    if level == 2:
+        return "Heading 2"
+    return "Heading 3"
 
 
 def _add_heading(document, text: str, level: int = 1) -> None:
@@ -557,6 +919,43 @@ def _add_heading(document, text: str, level: int = 1) -> None:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for run in paragraph.runs:
         run.bold = True
+
+
+def _add_front_matter_heading(document, text: str) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run(text)
+    run.bold = True
+
+
+def _add_table_of_contents(document, sections: Iterable[ContentBlock]) -> None:
+    section_list = list(sections)
+    if not section_list:
+        return
+    document.add_page_break()
+    _add_front_matter_heading(document, "目录")
+    _add_toc_field(document.add_paragraph())
+
+
+def _add_toc_field(paragraph: Paragraph) -> None:
+    run = paragraph.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    for node in (begin, instr, separate, end):
+        run._r.append(node)
+
+
+def _add_keywords(document, label: str, keywords: str) -> None:
+    value = str(keywords or "").strip()
+    if value:
+        document.add_paragraph(f"{label}{value}")
 
 
 def _add_text_paragraphs(document, text: str) -> None:

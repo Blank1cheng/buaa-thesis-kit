@@ -11,6 +11,7 @@
     "equations": {"type": "array", "items": {"$ref": "#/$defs/equationItem"}},
     "references": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
     "appendices": {"type": "array", "items": {"$ref": "#/$defs/contentBlock"}},
+    "ocr_ledger": {"type": "array", "items": {"$ref": "#/$defs/ocrLedgerItem"}},
     "extraction_warnings": {"type": "array", "items": {"type": "string"}},
     "status": {"enum": ["draft", "pass", "needs_review", "failed"]}
   },
@@ -83,13 +84,17 @@
     },
     "equationItem": {
       "type": "object",
-      "required": ["id", "kind", "text", "number", "latex", "source", "requires_review"],
+      "required": ["id", "kind", "text", "number", "latex", "omml", "preview_path", "object_path", "object_xml", "source", "requires_review"],
       "properties": {
         "id": {"type": "string"},
         "kind": {"type": "string"},
         "text": {"type": "string"},
         "number": {"type": "string"},
         "latex": {"type": "string"},
+        "omml": {"type": "string"},
+        "preview_path": {"type": "string"},
+        "object_path": {"type": "string"},
+        "object_xml": {"type": "string"},
         "source": {
           "anyOf": [
             {"$ref": "#/$defs/sourceEvidence"},
@@ -97,6 +102,24 @@
           ]
         },
         "requires_review": {"type": "boolean"}
+      }
+    },
+    "ocrLedgerItem": {
+      "type": "object",
+      "required": ["page", "status", "image_path", "text_characters", "confidence", "requires_review", "source"],
+      "properties": {
+        "page": {"type": "integer", "minimum": 1},
+        "status": {"type": "string"},
+        "image_path": {"type": "string"},
+        "text_characters": {"type": "integer", "minimum": 0},
+        "confidence": {"type": "number"},
+        "requires_review": {"type": "boolean"},
+        "source": {
+          "anyOf": [
+            {"$ref": "#/$defs/sourceEvidence"},
+            {"type": "null"}
+          ]
+        }
       }
     }
   }

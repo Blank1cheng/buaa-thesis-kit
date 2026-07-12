@@ -1,0 +1,4 @@
+rapid_latex_ocr==0.0.9
+# rapid_latex_ocr 0.0.9 imports requests but omits it from package metadata.
+requests==2.32.5
+chardet==5.2.0

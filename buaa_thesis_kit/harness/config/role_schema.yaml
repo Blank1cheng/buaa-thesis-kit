@@ -1,0 +1,25 @@
+roles:
+  template_static_required:
+    allowed_in_thesis: true
+    description: Fixed official-template text that may remain in the final thesis.
+  template_instruction:
+    allowed_in_thesis: false
+    description: Instructional text from the official template; never final thesis content.
+  template_sample_value:
+    allowed_in_thesis: false
+    description: Example values from the official template; allowed only if proven as source content.
+  user_fill_value:
+    allowed_in_thesis: true
+    description: Dynamic metadata extracted from the source thesis.
+  source_body_content:
+    allowed_in_thesis: true
+    description: Source thesis body content.
+  source_frontmatter_content:
+    allowed_in_thesis: true
+    description: Source abstract/task/declaration/front-matter content.
+  system_report_content:
+    allowed_in_thesis: false
+    description: Harness, warning, review, or debug status reserved for report.md.
+  debug_forbidden:
+    allowed_in_thesis: false
+    description: Debug or local-process leakage forbidden in thesis.docx.

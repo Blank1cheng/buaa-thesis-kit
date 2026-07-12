@@ -7,6 +7,56 @@
     "source": {"type": "string"},
     "outputs": {"type": "object"},
     "summary": {"type": "object"},
+    "metadata": {"type": "object"},
+    "editability": {
+      "type": "object",
+      "properties": {
+        "editable_characters": {"type": "integer", "minimum": 0},
+        "paragraph_count": {"type": "integer", "minimum": 0},
+        "table_count": {"type": "integer", "minimum": 0},
+        "drawing_count": {"type": "integer", "minimum": 0},
+        "page_screenshot_drawing_count": {"type": "integer", "minimum": 0},
+        "media_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "ocr_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page": {"type": "integer", "minimum": 1},
+          "status": {"type": "string"},
+          "image_path": {"type": "string"},
+          "text_characters": {"type": "integer", "minimum": 0},
+          "confidence": {"type": "number"},
+          "requires_review": {"type": "boolean"}
+        }
+      }
+    },
+    "equation_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "status": {
+            "enum": [
+              "editable_omml",
+              "editable_ole_object",
+              "trusted_latex",
+              "preview_image_needs_review",
+              "manual_transcription_required"
+            ]
+          },
+          "number": {"type": "string"},
+          "text": {"type": "string"},
+          "preview_path": {"type": "string"},
+          "editable_in_word": {"type": "boolean"},
+          "requires_review": {"type": "boolean"}
+        }
+      }
+    },
     "blocking_items": {"type": "array", "items": {"type": "string"}},
     "manual_review": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}}

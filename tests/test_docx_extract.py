@@ -59,6 +59,58 @@ def _patch_docx_zip(
     patched_path.replace(docx_path)
 
 
+def _patch_docx_with_ole_objects(docx_path: Path) -> None:
+    patched_path = docx_path.with_suffix(".ole.docx")
+    equation_object = (
+        '<w:p><w:r><w:object>'
+        '<v:shape xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<v:imagedata xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'r:id="rIdEquationImage"/>'
+        "</v:shape>"
+        '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'Type="Embed" ProgID="Equation.DSMT4" r:id="rIdEquation"/>'
+        "</w:object></w:r></w:p>"
+    ).encode("utf-8")
+    visio_object = (
+        '<w:p><w:r><w:object>'
+        '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'Type="Embed" ProgID="Visio.Drawing.15" r:id="rIdVisio"/>'
+        "</w:object></w:r></w:p>"
+    ).encode("utf-8")
+    relationships = (
+        '<Relationship Id="rIdEquation" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
+        'Target="embeddings/equation.bin"/>'
+        '<Relationship Id="rIdEquationImage" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        'Target="media/equation-preview.png"/>'
+        '<Relationship Id="rIdVisio" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" '
+        'Target="embeddings/visio.vsdx"/>'
+    ).encode("utf-8")
+    content_types = (
+        '<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>'
+        '<Default Extension="png" ContentType="image/png"/>'
+        '<Default Extension="vsdx" ContentType="application/vnd.ms-visio.drawing.main+xml"/>'
+    ).encode("utf-8")
+    with zipfile.ZipFile(docx_path, "r") as source, zipfile.ZipFile(patched_path, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "word/document.xml":
+                data = data.replace(b"</w:body>", equation_object + visio_object + b"</w:body>")
+            elif info.filename == "word/_rels/document.xml.rels":
+                data = data.replace(b"</Relationships>", relationships + b"</Relationships>")
+            elif info.filename == "[Content_Types].xml":
+                data = data.replace(b"</Types>", content_types + b"</Types>")
+            target.writestr(info, data)
+        target.writestr("word/embeddings/equation.bin", b"equation ole payload")
+        target.writestr("word/embeddings/visio.vsdx", b"visio payload")
+        target.writestr("word/media/equation-preview.png", TINY_PNG)
+    patched_path.replace(docx_path)
+
+
 def test_extracts_metadata_from_paragraphs_and_tables_with_evidence(tmp_path):
     source = tmp_path / "metadata.docx"
     work_dir = tmp_path / "work"
@@ -172,6 +224,48 @@ def test_splits_front_matter_body_sections_and_references_without_toc_entries(tm
     ]
 
 
+def test_chinese_abstract_stops_before_english_title_author_and_tutor(tmp_path):
+    source = tmp_path / "abstract-boundary.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "中文题目：基于实拍图像的光电系统性能评估关键技术研究",
+            "学生姓名：崔润昊",
+            "学号：17375303",
+            "学院：自动化科学与电气工程学院",
+            "专业：自动化",
+            "指导教师：唐荻音",
+            "日期：2021年5月",
+            "摘    要",
+            "这是中文摘要正文。",
+            "关键词：光电系统，调制传递函数",
+            "Research on Key Technologies of Performance Evaluation of Electro-Optical System",
+            "Author: CUI Run-hao",
+            "Tutor: TANG Di-yin",
+            "Abstract",
+            "This is the English abstract.",
+            "Key Words: electro-optical system, MTF",
+            "1 绪论",
+            "正文内容。",
+            "参考文献",
+            "[1] 王五. 测试[J]. 2026.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.front_matter["chinese_abstract"] == "这是中文摘要正文。"
+    assert model.front_matter["keywords_cn"] == "光电系统，调制传递函数"
+    assert model.front_matter["title_en"] == (
+        "Research on Key Technologies of Performance Evaluation of Electro-Optical System"
+    )
+    assert model.front_matter["author_en"] == "CUI Run-hao"
+    assert model.front_matter["tutor_en"] == "TANG Di-yin"
+    assert model.front_matter["english_abstract"] == "This is the English abstract."
+    assert model.front_matter["keywords_en"] == "electro-optical system, MTF"
+
+
 def test_skips_normalized_toc_entries_with_plain_page_numbers(tmp_path):
     source = tmp_path / "normalized-toc.docx"
     work_dir = tmp_path / "work"
@@ -205,6 +299,39 @@ def test_skips_normalized_toc_entries_with_plain_page_numbers(tmp_path):
     model = extract_thesis_model(source, work_dir)
 
     assert [section.title for section in model.sections] == ["1 绪论", "1.1 Background"]
+
+
+def test_recovers_auto_numbered_heading_titles_and_keeps_chapter_summary_as_body(tmp_path):
+    source = tmp_path / "auto-numbered-headings.docx"
+    work_dir = tmp_path / "work"
+    doc = Document()
+    doc.add_paragraph("中文题目：自动编号测试")
+    doc.add_paragraph("学生姓名：张三")
+    doc.add_paragraph("学号：20370001")
+    doc.add_paragraph("绪论", style="Heading 1")
+    doc.add_paragraph("1.1 课题来源与背景", style="Heading 2")
+    doc.add_paragraph("背景正文。")
+    doc.add_paragraph("1.5 论文章节安排", style="Heading 2")
+    doc.add_paragraph("论文组织结构如下：")
+    doc.add_paragraph("第一章 绪论。本章介绍了研究背景。")
+    doc.add_paragraph("第二章 基于实拍图像的调制传递函数计算方法。本章介绍方法。")
+    doc.add_paragraph("基于实拍图像的调制传递函数计算方法", style="Heading 1")
+    doc.add_paragraph("2.1 性能评估指标", style="Heading 2")
+    doc.add_paragraph("第二章正文。")
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert [section.title for section in model.sections] == [
+        "1 绪论",
+        "1.1 课题来源与背景",
+        "1.5 论文章节安排",
+        "2 基于实拍图像的调制传递函数计算方法",
+        "2.1 性能评估指标",
+    ]
+    section_15 = model.sections[2]
+    assert "第一章 绪论。本章介绍了研究背景。" in section_15.text
+    assert "第二章 基于实拍图像的调制传递函数计算方法。本章介绍方法。" in section_15.text
 
 
 def test_body_table_cells_are_not_duplicated_into_section_text(tmp_path):
@@ -274,6 +401,53 @@ def test_extracts_images_to_work_dir_and_marks_review(tmp_path):
     assert model.status == "needs_review"
 
 
+def test_extracts_docx_image_caption_from_following_figure_caption_paragraph(tmp_path):
+    source = tmp_path / "captioned-image.docx"
+    work_dir = tmp_path / "work"
+    image_path = tmp_path / "tiny.png"
+    image_path.write_bytes(TINY_PNG)
+    doc = Document()
+    doc.add_paragraph("1 Introduction")
+    doc.add_paragraph("Before figure paragraph.")
+    doc.add_picture(str(image_path))
+    caption = doc.add_paragraph("图1.1 系统架构")
+    caption.style = doc.styles["Normal"]
+    doc.add_paragraph("After figure paragraph.")
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert len(model.figures) == 1
+    assert model.figures[0].caption == "图1.1 系统架构"
+    assert model.figures[0].requires_review is True
+    assert any("图1.1 系统架构" in section.text for section in model.sections)
+
+
+def test_docx_reference_entries_without_visible_numbers_are_numbered_by_order(tmp_path):
+    source = tmp_path / "auto-numbered-references.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "Title: Reference Thesis",
+            "Student Name: Zhang San",
+            "Student ID: 20370001",
+            "1 Introduction",
+            "Body cites [2].",
+            "References",
+            "Wang Wu. First reference. 2026.",
+            "Li Si. Second reference. 2026.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert [reference.text for reference in model.references] == [
+        "[1] Wang Wu. First reference. 2026.",
+        "[2] Li Si. Second reference. 2026.",
+    ]
+
+
 def test_detects_omml_and_embedded_equations(tmp_path):
     source = tmp_path / "equations.docx"
     _save_docx(
@@ -292,15 +466,52 @@ def test_detects_omml_and_embedded_equations(tmp_path):
             "[1] 王五. 公式测试[J]. 2026.",
         ],
     )
-    _patch_docx_zip(source, add_omml=True, add_embedding=True)
+    _patch_docx_zip(source, add_omml=True)
+    _patch_docx_with_ole_objects(source)
 
     model = extract_thesis_model(source, tmp_path / "work")
 
     by_kind = {equation.kind: equation for equation in model.equations}
     assert by_kind["omml"].requires_review is True
+    assert by_kind["omml"].omml.startswith("<m:oMathPara")
+    assert "<m:t>x+y</m:t>" in by_kind["omml"].omml
     assert by_kind["embedded-object"].requires_review is True
+    assert Path(by_kind["embedded-object"].preview_path).read_bytes() == TINY_PNG
+    assert Path(by_kind["embedded-object"].object_path).read_bytes() == b"equation ole payload"
+    assert "<o:OLEObject" in by_kind["embedded-object"].object_xml
+    assert 'ProgID="Equation.DSMT4"' in by_kind["embedded-object"].object_xml
     assert "OMML equations require TeX review" in model.extraction_warnings
     assert model.status == "needs_review"
+
+
+def test_embedded_visio_objects_are_not_counted_as_equations(tmp_path):
+    source = tmp_path / "ole-classification.docx"
+    _save_docx(
+        source,
+        [
+            "中文题目：嵌入对象分类测试",
+            "学生姓名：张三",
+            "学号：20370001",
+            "学院：自动化科学与电气工程学院",
+            "专业：自动化",
+            "指导教师：李四",
+            "日期：2026年6月",
+            "1 绪论",
+            "正文。",
+            "参考文献",
+            "[1] 王五. 嵌入对象测试[J]. 2026.",
+        ],
+    )
+    _patch_docx_with_ole_objects(source)
+
+    model = extract_thesis_model(source, tmp_path / "work")
+
+    assert [(equation.kind, equation.text) for equation in model.equations] == [
+        ("embedded-object", "equation.bin")
+    ]
+    assert Path(model.equations[0].preview_path).read_bytes() == TINY_PNG
+    assert Path(model.equations[0].object_path).read_bytes() == b"equation ole payload"
+    assert "Visio.Drawing" not in model.equations[0].object_xml
 
 
 def test_duplicate_media_basenames_are_extracted_to_unique_paths(tmp_path):
@@ -454,6 +665,92 @@ def test_conflicting_student_ids_emit_warning_and_needs_review(tmp_path):
     assert model.metadata.student_id == "20370001"
     assert "conflicting metadata field: student_id" in model.extraction_warnings
     assert model.status == "needs_review"
+
+
+def test_extracts_spaced_cover_student_id_and_unlabeled_cover_date(tmp_path):
+    source = tmp_path / "buaa-cover.docx"
+    work_dir = tmp_path / "work"
+    _save_docx(
+        source,
+        [
+            "单位代码       10006",
+            "学    号      17375303",
+            "分类号    TP273",
+            "毕业设计(论文)",
+            "基于实拍图像的光电系统性能评估",
+            "关键技术研究",
+            "院（系）名称",
+            "自动化科学与电气工程学院",
+            "专业名称：自动化",
+            "学生姓名：崔润昊",
+            "指导教师：唐荻音",
+            "2021年5月",
+            "摘    要",
+            "这是摘要。",
+            "ABSTRACT",
+            "This is the abstract.",
+            "1 绪论",
+            "正文。",
+            "参考文献",
+            "[1] 王五. 测试[J]. 2021.",
+        ],
+    )
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.metadata.title_cn == "基于实拍图像的光电系统性能评估关键技术研究"
+    assert model.metadata.student_id == "17375303"
+    assert model.metadata.date == "2021年5月"
+    assert model.metadata.classification == "TP273"
+
+
+def test_cover_table_metadata_beats_later_task_book_paragraphs(tmp_path):
+    source = tmp_path / "cover-table-priority.docx"
+    work_dir = tmp_path / "work"
+    doc = Document()
+    for text in [
+        "单位代码       10006",
+        "学    号      17375303",
+        "分类号    TP273",
+        "毕业设计(论文)",
+        "基于实拍图像的光电系统性能评估",
+        "关键技术研究",
+        "2021年5月",
+    ]:
+        doc.add_paragraph(text)
+    table = doc.add_table(rows=4, cols=2)
+    rows = [
+        ("院（系）名称", "自动化科学与电气工程学院"),
+        ("专业名称", "自动化"),
+        ("学生姓名", "崔润昊"),
+        ("指导教师", "唐荻音"),
+    ]
+    for row, values in zip(table.rows, rows):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    for text in [
+        "北京航空航天大学",
+        "本科毕业设计（论文）任务书",
+        "申请人所在院系：自动化 专业类 170325 班",
+        "申请人专业：类 170325 班",
+        "摘    要",
+        "这是摘要。",
+        "ABSTRACT",
+        "This is the abstract.",
+        "1 绪论",
+        "正文。",
+        "参考文献",
+        "[1] 王五. 测试[J]. 2021.",
+    ]:
+        doc.add_paragraph(text)
+    doc.save(source)
+
+    model = extract_thesis_model(source, work_dir)
+
+    assert model.metadata.college == "自动化科学与电气工程学院"
+    assert model.metadata.major == "自动化"
+    assert model.metadata.student_name == "崔润昊"
+    assert model.metadata.advisor == "唐荻音"
 
 
 def test_extracted_model_payload_validates_against_schema(tmp_path):

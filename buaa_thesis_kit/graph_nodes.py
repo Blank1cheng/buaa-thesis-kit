@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+from pathlib import Path
+import zipfile
+
+from docx import Document
+
+from buaa_thesis_kit.assemble_in_place import assemble_in_place
+from buaa_thesis_kit.docx_acceptance import inspect_docx_output
+from buaa_thesis_kit.editable_template_render import render_editable_buaa_docx
+from buaa_thesis_kit.figure_table_acceptance import inspect_figure_tables
+from buaa_thesis_kit.front_matter_renderer import SPINE_XML_MARKER, _vertical_spine_pict
+from buaa_thesis_kit.graph import GraphState, NodeResult
+from buaa_thesis_kit.models import Metadata, ThesisModel
+from buaa_thesis_kit.pdf_acceptance import inspect_pdf_output
+from buaa_thesis_kit.reference_acceptance import inspect_references
+from buaa_thesis_kit.template_fill import fill_word_template
+
+
+SPINE_MARKERS = ("Book Spine", "\u4e66\u810a")
+SPINE_REQUIRED_FIELDS = ("title_cn", "student_name", "college", "major", "date")
+
+
+def inspect_source_features(state: GraphState) -> NodeResult:
+    state.source_features["has_spine"] = _source_has_spine(state.extraction_source)
+    return NodeResult(next_node="diagnose_compliance")
+
+
+def diagnose_compliance(state: GraphState) -> NodeResult:
+    if state.model.status == "failed":
+        details = "; ".join(state.model.extraction_warnings) if state.model.extraction_warnings else "no details"
+        state.blocking_items.append(f"Extraction failed: {details}")
+        return NodeResult(next_node="finalize_output")
+
+    if not state.source_features.get("has_spine", False):
+        _append_once(state.findings, "missing_spine")
+    reference_inspection = inspect_references(state.model)
+    for item in reference_inspection.blocking_items:
+        if state.sample_mode == "truncated" and _is_truncated_reference_completeness_item(item):
+            _append_once(state.manual_review, f"truncated_sample_reference_check_skipped: {item}")
+        else:
+            _append_once(state.blocking_items, item)
+    for item in reference_inspection.manual_review:
+        _append_once(state.manual_review, item)
+    for item in reference_inspection.notes:
+        _append_once(state.notes, item)
+    figure_table_inspection = inspect_figure_tables(state.model)
+    for item in figure_table_inspection.blocking_items:
+        _append_once(state.blocking_items, item)
+    for item in figure_table_inspection.manual_review:
+        _append_once(state.manual_review, item)
+    for item in figure_table_inspection.notes:
+        _append_once(state.notes, item)
+    return NodeResult(next_node="plan_minimal_fixes")
+
+
+def plan_minimal_fixes(state: GraphState) -> NodeResult:
+    if "missing_spine" in state.findings:
+        missing_fields = _missing_spine_fields(state.model.metadata)
+        if missing_fields:
+            _append_once(
+                state.manual_review,
+                f"spine_metadata_missing: {', '.join(missing_fields)}",
+            )
+        _append_once(state.repair_actions, "insert_spine")
+        _append_once(state.notes, "Finding missing_spine planned as repair action insert_spine.")
+    return NodeResult(next_node="apply_word_fixes")
+
+
+def apply_word_fixes(state: GraphState) -> NodeResult:
+    state.work_dir.mkdir(parents=True, exist_ok=True)
+    repaired_docx = state.work_dir / "repaired.docx"
+    used_in_place_template = _template_has_in_place_markers(state.template_path)
+
+    if state.source_kind == "docx":
+        if state.template_path is None:
+            state.blocking_items.append("Editable Word template generation failed: missing Word template.")
+            return NodeResult(next_node="export_pdf")
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Editable Word template generation failed",
+        )
+        if document is None:
+            return NodeResult(next_node="export_pdf")
+        state.notes.append("Editable BUAA template Word generated from extracted Word content.")
+    elif state.source_kind == "pdf":
+        if state.template_path is None:
+            state.blocking_items.append("Editable PDF-to-Word generation failed: missing Word template.")
+            return NodeResult(next_node="export_pdf")
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Editable PDF-to-Word template generation failed",
+        )
+        if document is None:
+            return NodeResult(next_node="export_pdf")
+        state.notes.append("Editable BUAA template Word generated from extracted PDF content.")
+        state.manual_review.append(
+            "PDF source requires manual review for equations, figures, and any layout not recoverable as editable Word objects."
+        )
+    else:
+        if state.template_path is None:
+            state.blocking_items.append("Word repair failed: missing template for non-DOCX source.")
+            return NodeResult(next_node="export_pdf")
+        document = _render_authoritative_docx_in_place_or_legacy(
+            state,
+            repaired_docx,
+            error_prefix="Word repair failed",
+        )
+        if document is None:
+            return NodeResult(next_node="export_pdf")
+
+    if used_in_place_template:
+        _append_once(state.applied_repairs, "insert_spine")
+        _append_once(state.notes, "Applied repair insert_spine by preserving official template spine in place.")
+    elif "insert_spine" in state.repair_actions and not _document_has_spine(document):
+        _append_spine_page(document, state.model.metadata)
+        _append_once(state.applied_repairs, "insert_spine")
+        _append_once(state.notes, "Applied repair insert_spine for missing_spine.")
+    elif "insert_spine" in state.repair_actions and _document_has_spine(document):
+        _append_once(state.applied_repairs, "insert_spine")
+        _append_once(state.notes, "Applied repair insert_spine via BUAA editable template.")
+
+    if not used_in_place_template:
+        document.save(str(repaired_docx))
+    state.authoritative_docx = repaired_docx
+    state.outputs["word"] = "pass" if repaired_docx.exists() and repaired_docx.stat().st_size > 0 else "failed"
+    return NodeResult(next_node="export_pdf")
+
+
+def _render_authoritative_docx_in_place_or_legacy(
+    state: GraphState,
+    repaired_docx: Path,
+    *,
+    error_prefix: str,
+):
+    if state.template_path is not None and _template_has_in_place_markers(state.template_path):
+        try:
+            assemble_in_place(state.template_path, state.model, repaired_docx, style_map_path=_style_map_path(state.template_path))
+        except Exception as exc:
+            state.blocking_items.append(f"{error_prefix}: {exc}")
+            return None
+        return Document(str(repaired_docx))
+
+    try:
+        render_editable_buaa_docx(state.template_path, state.model, repaired_docx)
+    except Exception as exc:
+        state.blocking_items.append(f"{error_prefix}: {exc}")
+        return None
+    state.manual_review.append("Legacy non-instrumented template path used; official in-place template was not available.")
+    return Document(str(repaired_docx))
+
+
+def _template_has_in_place_markers(template_path: Path | None) -> bool:
+    if template_path is None or not Path(template_path).exists():
+        return False
+    try:
+        with zipfile.ZipFile(template_path) as package:
+            document_xml = package.read("word/document.xml").decode("utf-8", errors="ignore")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    return "{{BODY_START}}" in document_xml and "{{BODY_END}}" in document_xml
+
+
+def _style_map_path(template_path: Path | None) -> Path | None:
+    if template_path is None:
+        return None
+    candidate = Path(template_path).with_name("style_map.json")
+    return candidate if candidate.exists() else None
+
+
+def visual_compare(state: GraphState) -> NodeResult:
+    if "missing_spine" in state.findings and "insert_spine" not in state.applied_repairs:
+        _append_once(state.blocking_items, "spine_visual_mismatch: insert_spine repair was not applied.")
+    if state.authoritative_docx is not None:
+        inspection = inspect_docx_output(
+            state.authoritative_docx,
+            state.model.metadata,
+            source_kind=state.source_kind,
+            require_spine=True,
+            required_body_snippets=_source_body_snippets(state.model),
+            expected_omml_equation_count=_expected_omml_equation_count(state.model),
+        )
+        state.editability = dict(inspection.editability)
+        for item in inspection.blocking_items:
+            _append_once(state.blocking_items, item)
+        for item in inspection.manual_review:
+            _append_once(state.manual_review, item)
+        for item in inspection.notes:
+            _append_once(state.notes, item)
+    thesis_pdf = state.output_root / "thesis.pdf"
+    if thesis_pdf.exists() or state.outputs.get("pdf") in {"pass", "needs_review"}:
+        inspection = inspect_pdf_output(thesis_pdf)
+        for item in inspection.blocking_items:
+            _append_once(state.blocking_items, item)
+        for item in inspection.manual_review:
+            _append_once(state.manual_review, item)
+        for item in inspection.notes:
+            _append_once(state.notes, item)
+    return NodeResult(next_node="decide")
+
+
+def decide(state: GraphState) -> NodeResult:
+    if state.blocking_items:
+        return NodeResult(next_node="finalize_output")
+    unresolved = [
+        finding
+        for finding in state.findings
+        if finding == "missing_spine" and "insert_spine" not in state.applied_repairs
+    ]
+    if unresolved:
+        return NodeResult(next_node="revise_plan")
+    return NodeResult(next_node="finalize_output")
+
+
+def _source_has_spine(source: Path | None) -> bool:
+    if source is None or source.suffix.lower() != ".docx" or not source.exists():
+        return False
+    try:
+        document = Document(str(source))
+    except Exception:
+        return False
+    return _document_has_spine(document)
+
+
+def _document_has_spine(document) -> bool:
+    if any(_text_has_spine_marker(paragraph.text) for paragraph in document.paragraphs):
+        return True
+    document_xml = document._element.xml
+    return SPINE_XML_MARKER in document_xml or 'w:textDirection w:val="tbRl"' in document_xml
+
+
+def _text_has_spine_marker(text: str) -> bool:
+    normalized = str(text or "").strip()
+    return "Book Spine" in normalized or normalized == "\u4e66\u810a"
+
+
+def _missing_spine_fields(metadata: Metadata) -> list[str]:
+    missing: list[str] = []
+    if not (metadata.title_cn or metadata.title_en):
+        missing.append("title")
+    for field in SPINE_REQUIRED_FIELDS:
+        if field == "title_cn":
+            continue
+        if not getattr(metadata, field):
+            missing.append(field)
+    return missing
+
+
+def _source_body_snippets(model: ThesisModel) -> list[str]:
+    snippets: list[str] = []
+    for section in model.sections:
+        for line in str(section.text or "").splitlines():
+            value = line.strip()
+            if len(value) < 20:
+                continue
+            snippets.append(value)
+            if len(snippets) >= 8:
+                return snippets
+    return snippets
+
+
+def _expected_omml_equation_count(model: ThesisModel) -> int:
+    return sum(1 for equation in model.equations if equation.omml.strip())
+
+
+def _append_spine_page(document, metadata: Metadata) -> None:
+    document.add_page_break()
+    paragraph = document.add_paragraph()
+    paragraph.add_run()._r.append(_vertical_spine_pict(metadata))
+
+
+def _is_truncated_reference_completeness_item(item: str) -> bool:
+    return item.startswith("missing_references_section") or item.startswith("citation_without_reference")
+
+
+def _metadata_value(value: str) -> str:
+    return str(value or "").strip()
+
+
+def _append_once(items: list[str], item: str) -> None:
+    if item not in items:
+        items.append(item)
+
+
+__all__ = [
+    "apply_word_fixes",
+    "decide",
+    "diagnose_compliance",
+    "inspect_source_features",
+    "plan_minimal_fixes",
+    "visual_compare",
+]

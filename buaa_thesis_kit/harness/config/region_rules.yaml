@@ -1,0 +1,37 @@
+abstract_cn_forbidden:
+  - "Research on"
+  - "Author:"
+  - "Author :"
+  - "Tutor:"
+  - "Tutor :"
+  - "Abstract"
+  - "Key Words"
+abstract_en_required:
+  - "Abstract"
+abstract_en_forbidden:
+  - "关键词："
+  - "电分离工艺技术在炼油工业中"
+declaration_forbidden:
+  - "本人郑重声明"
+  - "指导教师签名"
+toc_forbidden:
+  - "本人声明"
+  - "Mao Xia"
+  - "刘国钧"
+  - "I级叶/盘转子"
+  - "I 级叶/盘转子"
+  - "有限元法"
+  - "循环对称结构"
+  - "油/水电迁移"
+  - "模板样例参考文献条目"
+  - "参考文献样例条目"
+body_forbidden:
+  - "院（系）名称"
+  - "专业名称"
+  - "学生姓名"
+  - "指导教师"
+  - "北京航空航天大学毕业设计(论文)"
+  - "第 I 页"
+  - "第 1 页"
+  - "第 48 页"
+  - "第48页"

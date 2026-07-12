@@ -117,3 +117,78 @@ def test_decision_policy_exists_and_defines_statuses():
     assert "`pass`" in policy
     assert "`needs_review`" in policy
     assert "`failed`" in policy
+
+
+def test_agent_workflow_documents_editability_and_strict_finalization():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+    roadmap = (root / "references" / "phase-2-roadmap.md").read_text(encoding="utf-8")
+
+    assert "Editability Audit" in readme
+    assert "--strict" in readme
+    assert "Editability Audit" in workflow
+    assert "page_screenshot_drawing_count" in workflow
+    assert "body_snippet_hits" in workflow
+    assert "--strict" in workflow
+    assert "strict_finalization_failed" in workflow
+    assert "strict finalization mode" in roadmap
+
+
+def test_agent_workflow_documents_ocr_ledger():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    assert "OCR Ledger" in readme
+    assert "needs_ocr" in readme
+    assert "ocr_text_extracted" in readme
+    assert "OCR Ledger" in workflow
+    assert "needs_ocr" in workflow
+    assert "ocr_text_extracted" in workflow
+    assert "pdf-page-001.png" in workflow
+
+
+def test_agent_workflow_documents_equation_ledger():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "Equation Ledger" in text
+        assert "editable_omml" in text
+        assert "editable_ole_object" in text
+        assert "safe linear" in text
+        assert "frac" in text
+        assert "sqrt" in text
+        assert "sum" in text
+        assert "int" in text
+        assert "Greek" in text
+        assert "bmatrix" in text
+        assert "pmatrix" in text
+        assert "cases" in text
+        assert "latex_needs_review" in text
+        assert "preview_image_needs_review" in text
+
+
+def test_agent_workflow_documents_cover_geometry_audit():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "PDF cover geometry" in text
+        assert "cover_title_y" in text
+        assert "field_rows_y" in text
+        assert "date_y" in text
+
+
+def test_agent_workflow_documents_figure_table_consistency():
+    root = rules_module.RULES_DIR.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / "references" / "agent-workflow.md").read_text(encoding="utf-8")
+
+    for text in (readme, workflow):
+        assert "figure/table validation" in text
+        assert "figure_caption_without_asset" in text
+        assert "duplicate_figure_number" in text

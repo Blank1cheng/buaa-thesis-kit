@@ -1,0 +1,118 @@
+{
+  "status": "red",
+  "protocol": {
+    "agent_input": "Agent only receives the raw scenario from prompt_file.",
+    "grader_input": "rubric_file is read only by the grader and is never shown to the Agent.",
+    "answer_capture": "answer preserves the unassisted Agent response verbatim without normalization, summarization, deletion, or appended text."
+  },
+  "passed_count": 1,
+  "failed_count": 2,
+  "scenarios": [
+    {
+      "id": "docx-source-priority",
+      "scenario_type": "positive_control",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/docx-source-priority.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/docx-source-priority.md",
+      "answer": "**采用的元数据**\n\n| 字段 | 采用值 | 依据 |\n|---|---|---|\n| 学院 | 自动化科学与电气工程学院 | DOCX 原始 OOXML 中对应表格/文本框的明确字段值 |\n| 专业 | 自动化 | DOCX 原始 OOXML |\n| 导师 | 唐荻音 | DOCX 原始 OOXML |\n| 日期 | 2021年5月，仅在确认其位于日期字段后使用 | PDF 抽取结果不能证明字段归属 |\n\n“自动化学院”和把“2021年5月”识别为导师，均视为 PDF 文本层的阅读顺序或字段配对错误，不写入 LaTeX 元数据。\n\n**来源优先级**\n\n1. 作者、教务系统或已签字定稿信息的明确确认。\n2. 当前版本 DOCX 的原始 OOXML，且字段标签与值的结构关系明确。\n3. DOCX/PDF 页面的高分辨率视觉核对。\n4. DOCX 常规文本抽取结果。\n5. PDF 文本抽取或 OCR，仅作为检索线索。\n\nPDF 页面排版完整只能说明渲染正常，不能证明 `pdftotext` 按正确顺序还原了文本框和表格。\n\n**操作顺序**\n\n1. 固定 DOCX、PDF 的版本并记录文件哈希，避免核验过程中混入其他版本。\n2. 解包 DOCX，检查 `word/document.xml`、页眉 XML 以及 `w:tbl`、`w:txbxContent` 中的字段。\n3. 检查修订、删除文本和隐藏内容，确认所取内容属于当前可见版本，而不是旧修订。\n4. 在 PDF 封面截图中逐项定位“学院”“专业”“导师”“日期”，按视觉位置核对，不依赖抽取文本顺序。\n5. 建立唯一的 LaTeX 元数据源，例如：\n\n```tex\n\\def\\ThesisCollege{自动化科学与电气工程学院}\n\\def\\ThesisMajor{自动化}\n\\def\\ThesisAdvisor{唐荻音}\n\\def\\ThesisDate{2021年5月} % 仅在日期字段确认后保留\n```\n\n6. 先生成审阅版 PDF，将封面重新渲染为图片，检查字段内容、位置、字体、换行和遮挡。\n7. 再用文本抽取做辅助检查；即使抽取顺序仍不理想，只要视觉内容及源元数据正确，也不应反向修改导师等字段。\n\n**可以生成最终 PDF 的条件**\n\n确认 DOCX 是目标定稿版本、上述 XML 内容不是删除或隐藏的旧内容，并且封面视觉核对或论文作者确认字段归属后，即可生成最终 PDF。若截图中肉眼实际显示的学院或导师与 XML 不同，应暂停最终生成并要求作者确认；不能仅凭 PDF 文本抽取结果覆盖 DOCX 元数据。",
+      "checks": [
+        {
+          "id": "uses-raw-docx-structure",
+          "passed": true,
+          "observation": "采用字段结构明确的 DOCX 原始 OOXML，并把 PDF 文本抽取仅作为辅助线索。"
+        },
+        {
+          "id": "selects-correct-metadata",
+          "passed": true,
+          "observation": "学院、专业和导师均采用 OOXML 中的值，日期要求先确认字段归属。"
+        },
+        {
+          "id": "gates-final-render",
+          "passed": true,
+          "observation": "要求确认版本、修订可见性并完成视觉或作者核对后再生成最终 PDF。"
+        }
+      ],
+      "passed": true,
+      "observed_rationalizations": []
+    },
+    {
+      "id": "pdf-visual-formula",
+      "scenario_type": "discriminator",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/pdf-visual-formula.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/pdf-visual-formula.md",
+      "answer": "**决定：暂不写入最终 `thesis.tex`。**\n\n- **状态：** `待核验 / BLOCKED`。当前只能确认候选在视觉上合理、语法可编译、外形近似，不能确认字符身份。\n- **原因：** 0.96 是模型置信度，不是事实证明；XeLaTeX 编译仅证明语法有效；长宽比几乎无法区分 `h_1` 与 `h_l`。\n\n**所需证据：**\n\n1. 检查 PDF 文本层、字体对象或字符编码，确定原字符。\n2. 对照论文中同字体、同字号的下标 `1` 和 `l`。\n3. 检查前后文的符号定义及后续引用，例如是否存在一组 \\(h_l\\)，或明确提到 \\(h_1\\)。\n4. 优先寻找作者版源码、预印本、HTML/MathML 版本等独立来源。\n5. 若仍无法判断，联系作者或在转录记录中保留歧义。\n\n**下一步：** 从原始 PDF 以高分辨率重新裁剪，并进行“字形对照 + 上下文符号检索”。证据支持数字时写入 `h_1(x)=\\operatorname{PSF}(x)`；支持字母时写入 `h_l(x)=\\operatorname{PSF}(x)`。核验前只能放在带明确 `TODO` 标记的工作稿中，不能进入最终版本。",
+      "checks": [
+        {
+          "id": "does-not-write-ambiguous-final-equation",
+          "passed": true,
+          "observation": "正确拒绝把未消歧候选写入最终 thesis.tex。"
+        },
+        {
+          "id": "uses-needs-review-status",
+          "passed": false,
+          "observation": "使用“待核验 / BLOCKED”，未使用标准状态 needs_review。"
+        },
+        {
+          "id": "assigns-stable-h-id",
+          "passed": false,
+          "observation": "未创建可稳定追踪的 H-xxx 问题 ID。"
+        },
+        {
+          "id": "keeps-ambiguity-out-of-working-tex",
+          "passed": false,
+          "observation": "建议将未决候选以 TODO 形式放入工作稿，而不是只保留在结构化证据记录中。"
+        },
+        {
+          "id": "requests-disambiguating-evidence",
+          "passed": true,
+          "observation": "要求检查字体编码、同字形、上下文和独立来源。"
+        }
+      ],
+      "passed": false,
+      "observed_rationalizations": [
+        "将“待核验 / BLOCKED”作为未决公式的输出状态，没有归一化为 needs_review。",
+        "用工作稿中的 TODO 承载歧义，却没有分配稳定 H-xxx ID 并维护结构化证据记录。"
+      ]
+    },
+    {
+      "id": "harness-authority",
+      "scenario_type": "discriminator",
+      "prompt_file": "skills/normalizing-buaa-theses/evals/prompts/harness-authority.md",
+      "rubric_file": "skills/normalizing-buaa-theses/evals/harness-authority.md",
+      "answer": "**最终状态：FAILED，不可交付。**\n\n原因：\n\n- `G23=failed`：XeLaTeX 存在未解析控制序列，现有 PDF 很可能是旧产物，不能证明当前源码可成功构建。\n- `G28=failed`：参考文献右边界越界，属于明确的排版缺陷。\n- `G27=needs_review`：人工审查尚未闭环。\n- `G20`、`G24` 通过不能覆盖上述失败项。\n\n**修复顺序：**\n\n1. 修复 `G23` 的 unresolved control sequence，清理旧构建产物后完整重编译，确认生成全新的 PDF。\n2. 修复 `G28` 的参考文献越界，并重新检查参考文献页面。\n3. 完成 `G27` 人工审查并记录结论。\n4. 重跑全部 gate，只有所有必需项均为 `pass`，且新 PDF 复核无误后才能交付。",
+      "checks": [
+        {
+          "id": "harness-is-authoritative",
+          "passed": true,
+          "observation": "将最终状态判为 FAILED，不允许视觉观感覆盖 gate 结果。"
+        },
+        {
+          "id": "rejects-stale-pdf",
+          "passed": true,
+          "observation": "识别旧 PDF 不能证明当前源码成功构建，并要求清理后完整重编译。"
+        },
+        {
+          "id": "orders-remediation",
+          "passed": true,
+          "observation": "依次修复 G23、G28、闭环 G27，并重跑全部 gate。"
+        },
+        {
+          "id": "blocks-delivery-until-pass",
+          "passed": true,
+          "observation": "要求所有必需项均为 pass 后才能交付。"
+        },
+        {
+          "id": "canonical-structured-status",
+          "passed": false,
+          "observation": "只给出大写展示状态 FAILED，未提供规范小写结构化字段 status=failed。"
+        },
+        {
+          "id": "stable-failure-ids",
+          "passed": false,
+          "observation": "未为 G23、G27、G28 分配稳定的 H-xxx ID，也未生成 failure_queue 记录。"
+        }
+      ],
+      "passed": false,
+      "observed_rationalizations": []
+    }
+  ]
+}

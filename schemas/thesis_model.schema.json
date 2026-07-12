@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BUAA Harness Thesis Model Contract",
+  "type": "object",
+  "required": ["metadata"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["unit_code", "student_id", "classification", "title_cn", "college", "major", "student_name", "advisor", "date"],
+      "properties": {
+        "unit_code": {"type": "string"},
+        "student_id": {"type": "string"},
+        "classification": {"type": "string"},
+        "title_cn": {"type": "string"},
+        "title_cn_lines": {"type": "array", "items": {"type": "string"}},
+        "college": {"type": "string"},
+        "major": {"type": "string"},
+        "student_name": {"type": "string"},
+        "advisor": {"type": "string"},
+        "date": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "task_book": {"type": "object"},
+    "declaration": {"type": "object"},
+    "abstract_cn": {"type": "object"},
+    "abstract_en": {"type": "object"},
+    "body": {"type": "array"},
+    "acknowledgement": {"type": ["string", "null"]},
+    "references": {"type": "array"}
+  },
+  "additionalProperties": true
+}

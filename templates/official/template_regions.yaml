@@ -1,0 +1,75 @@
+template: buaa_undergraduate_template_instrumented.docx
+mode: in_place_official_template
+regions:
+  cover:
+    purpose: Keep official cover layout and replace only scalar placeholders.
+    placeholders:
+      - UNIT_CODE
+      - STUDENT_ID
+      - CLASSIFICATION
+      - TITLE_CN_LINE1
+      - TITLE_CN_LINE2
+      - COLLEGE
+      - MAJOR
+      - STUDENT_NAME
+      - ADVISOR
+      - DATE_YEAR_MONTH
+  spine:
+    purpose: Keep official spine frame while replacing title, student, and university text.
+    placeholders:
+      - SPINE_TITLE_CN
+      - SPINE_STUDENT_NAME
+      - SPINE_UNIVERSITY
+  task_book:
+    purpose: Preserve official task-book table geometry and replace fillable fields.
+    placeholders:
+      - TASK_TITLE
+      - TASK_RAW_MATERIALS
+      - TASK_WORK_CONTENT
+      - TASK_REFERENCES
+      - TASK_COLLEGE_MAJOR_CLASS
+      - TASK_STUDENT_NAME
+      - TASK_DATE_RANGE
+      - TASK_DEFENSE_DATE
+      - TASK_GRADE
+      - TASK_ADVISOR
+      - TASK_DIRECTOR_SIGNATURE
+  declaration:
+    purpose: Preserve official declaration text and replace author/date fields.
+    placeholders:
+      - DECLARATION_STUDENT_NAME
+      - DECLARATION_DATE
+  abstracts:
+    purpose: Preserve official abstract page styles while replacing extracted abstract content.
+    placeholders:
+      - TITLE_CN
+      - ABSTRACT_CN
+      - KEYWORDS_CN
+      - TITLE_EN
+      - AUTHOR_EN
+      - TUTOR_EN
+      - ABSTRACT_EN
+      - KEYWORDS_EN
+  body:
+    purpose: Replace sample body between explicit body markers.
+    start_marker: BODY_START
+    end_marker: BODY_END
+  acknowledgement:
+    purpose: Replace acknowledgement placeholder if source content exists.
+    placeholders:
+      - ACKNOWLEDGEMENT
+  references:
+    purpose: Replace references placeholder and keep no official sample references after it.
+    placeholders:
+      - REFERENCES
+validation:
+  forbidden_roles:
+    - template_instruction
+    - template_sample_value
+  required_checks:
+    - required_placeholders
+    - template_forbidden_text
+    - reference_tail_clean
+    - toc_field
+    - page_number_fields
+    - headers_footers

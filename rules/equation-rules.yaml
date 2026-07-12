@@ -4,15 +4,26 @@ equations:
     - omml
     - mathtype_ole
     - equation_editor
+    - safe_linear_pdf_text
     - image_equation
     - plain_text
   field_markers:
     - "SEQ MTEqn"
     - "MTPlaceRef"
     - "Equation.DSMT4"
+  supported_latex_macros:
+    - frac
+    - sqrt
+    - sum
+    - int
+    - Greek
+    - bmatrix
+    - pmatrix
+    - cases
 manual_review:
   - mathtype_ole
   - image_equation
+  - unsupported_latex_macro
   - multi_equation_same_paragraph
   - missing_number
   - duplicate_number

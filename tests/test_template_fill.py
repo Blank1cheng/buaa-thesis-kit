@@ -13,6 +13,22 @@ TINY_PNG = (
     b"\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02\x00\x00\x00\x0bIDATx\xdac\xfc\xff"
     b"\x1f\x00\x03\x03\x02\x00\xef\xbf\xa7\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+OMML_FRAGMENT = (
+    '<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+    "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>"
+    "</m:oMathPara>"
+)
+OLE_OBJECT_XML = (
+    '<w:object xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:v="urn:schemas-microsoft-com:vml" '
+    'xmlns:o="urn:schemas-microsoft-com:office:office" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    '<v:shape id="_x0000_i1025" type="#_x0000_t75" style="width:120pt;height:24pt">'
+    '<v:imagedata r:id="rIdEquationImage" o:title=""/>'
+    "</v:shape>"
+    '<o:OLEObject Type="Embed" ProgID="Equation.DSMT4" r:id="rIdEquation"/>'
+    "</w:object>"
+)
 
 
 def _sample_model(tmp_path: Path) -> ThesisModel:
@@ -143,10 +159,10 @@ def test_no_placeholder_template_fallback_builds_docx_from_model(tmp_path):
     assert "Opening paragraph." in text
     assert "Metric" in text
     assert "Accuracy" in text
-    assert "[Figure requires review]" in text
-    assert "missing-image.png" in text
-    assert "[Equation requires review]" in text
-    assert "x+y" in text
+    assert "[图像缺失：Figure 1 System overview，需人工确认]" in text
+    assert "missing-image.png" not in text
+    assert "[公式缺失：" in text
+    assert "x+y" not in text
     assert "[1] Wang. Flight control study. 2026." in text
     assert "Appendix A" in text
     assert "Supplemental material." in text
@@ -198,7 +214,7 @@ def test_scalar_only_placeholder_template_appends_unrepresented_major_blocks(tmp
     assert "1 Introduction" in text
     assert "Metric" in text
     assert "Figure 1 System overview" in text
-    assert "[Equation requires review]" in text
+    assert "[公式缺失：" in text
     assert "[1] Wang. Flight control study. 2026." in text
     assert "Appendix A" in text
 
@@ -259,10 +275,115 @@ def test_figures_placeholder_inserts_supported_image_and_reviews_missing_image(t
 
     result = Document(output)
     text = _all_text(result)
-    assert "[Figure inserted] Inserted figure" in text
-    assert "[Figure requires review] Missing figure" in text
+    assert "Inserted figure" in text
+    assert "[Figure inserted]" not in text
+    assert "[图像缺失：Missing figure，需人工确认]" in text
+    assert "missing.png" not in text
     with zipfile.ZipFile(output) as package:
         assert any(name.startswith("word/media/") for name in package.namelist())
+
+
+def test_equations_placeholder_inserts_omml_word_math(tmp_path):
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-omml",
+            kind="omml",
+            text="x+y",
+            omml=OMML_FRAGMENT,
+            requires_review=True,
+        )
+    ]
+    template = tmp_path / "equation-placeholder.docx"
+    output = tmp_path / "out" / "thesis.docx"
+    doc = Document()
+    doc.add_paragraph("{{EQUATIONS}}")
+    doc.save(template)
+
+    fill_word_template(template, model, output)
+
+    with zipfile.ZipFile(output) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+    assert "<m:oMathPara" in document_xml
+    assert "<m:t>x+y</m:t>" in document_xml
+    assert "[Equation requires review]" not in document_xml
+
+
+def test_equations_placeholder_inserts_supported_embedded_equation_preview(tmp_path):
+    preview = tmp_path / "equation-preview.png"
+    preview.write_bytes(TINY_PNG)
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-preview",
+            kind="embedded-object",
+            text="equation.bin",
+            preview_path=str(preview),
+            requires_review=True,
+        )
+    ]
+    template = tmp_path / "equation-preview-template.docx"
+    output = tmp_path / "out" / "thesis.docx"
+    doc = Document()
+    doc.add_paragraph("{{EQUATIONS}}")
+    doc.save(template)
+
+    fill_word_template(template, model, output)
+
+    result = Document(output)
+    text = _all_text(result)
+    assert "[Equation preview inserted]" not in text
+    assert "[Equation requires review]" not in text
+    with zipfile.ZipFile(output) as package:
+        assert any(name.startswith("word/media/") for name in package.namelist())
+
+
+def test_equations_placeholder_preserves_editable_embedded_equation_object(tmp_path):
+    preview = tmp_path / "equation-preview.png"
+    preview.write_bytes(TINY_PNG)
+    object_path = tmp_path / "equation.bin"
+    object_path.write_bytes(b"equation ole payload")
+    model = _sample_model(tmp_path)
+    model.equations = [
+        EquationItem(
+            id="eq-object",
+            kind="embedded-object",
+            text="equation.bin",
+            preview_path=str(preview),
+            object_path=str(object_path),
+            object_xml=OLE_OBJECT_XML,
+            requires_review=True,
+        )
+    ]
+    template = tmp_path / "equation-object-template.docx"
+    output = tmp_path / "out" / "thesis.docx"
+    doc = Document()
+    doc.add_paragraph("{{EQUATIONS}}")
+    doc.save(template)
+
+    fill_word_template(template, model, output)
+
+    result = Document(output)
+    text = _all_text(result)
+    assert "[Equation preview inserted]" not in text
+    assert "[Equation requires review]" not in text
+    with zipfile.ZipFile(output) as package:
+        names = package.namelist()
+        document_xml = package.read("word/document.xml").decode("utf-8")
+        rels_xml = package.read("word/_rels/document.xml.rels").decode("utf-8")
+        content_types = package.read("[Content_Types].xml").decode("utf-8")
+        embedding_names = [name for name in names if name.startswith("word/embeddings/")]
+        media_names = [name for name in names if name.startswith("word/media/")]
+
+        assert "<o:OLEObject" in document_xml
+        assert 'ProgID="Equation.DSMT4"' in document_xml
+        assert 'r:id="rIdEquation"' not in document_xml
+        assert 'r:id="rIdEquationImage"' not in document_xml
+        assert "oleObject" in rels_xml
+        assert "buaa-equation-eq-object.bin" in "\n".join(embedding_names)
+        assert "buaa-equation-eq-object.png" in "\n".join(media_names)
+        assert package.read("word/embeddings/buaa-equation-eq-object.bin") == b"equation ole payload"
+        assert "application/vnd.openxmlformats-officedocument.oleObject" in content_types
 
 
 def test_inline_scalar_replacement_preserves_unrelated_bold_run(tmp_path):
@@ -321,8 +442,9 @@ def test_corrupt_existing_png_is_reviewed_without_false_inserted_label(tmp_path)
     for output in (placeholder_output, fallback_output):
         text = _all_text(Document(output))
         assert "[Figure inserted]" not in text
-        assert "[Figure requires review] Corrupt figure" in text
-        assert "corrupt.png" in text
+        assert "[Figure requires review]" not in text
+        assert "[图像缺失：Corrupt figure，需人工确认]" in text
+        assert "corrupt.png" not in text
 
 
 def test_inline_scalar_replacement_preserves_trailing_space_before_bold_run(tmp_path):

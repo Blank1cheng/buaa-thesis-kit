@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "unit_code": "10006",
+    "student_id": "17375303",
+    "classification": "TP273",
+    "title_cn": "基于实拍图像的光电系统性能评估关键技术研究",
+    "student_name": "崔润昊",
+    "advisor": "唐荫韬"
+  },
+  "sample_mode": "truncated",
+  "allowed_missing_due_to_truncation": [
+    "3 实验结果",
+    "4 系统实现",
+    "5 总结与展望",
+    "参考文献"
+  ]
+}

@@ -1,0 +1,181 @@
+version: 1
+unit: mm
+
+cover:
+  page:
+    width_mm: 210
+    height_mm: 297
+    top_margin_mm: 0
+    bottom_margin_mm: 0
+    left_margin_mm: 0
+    right_margin_mm: 0
+  top_line:
+    x_mm: 20
+    y_mm: 8
+    w_mm: 170
+    h_pt: 1
+  seal:
+    x_mm: 28
+    y_mm: 30
+    w_mm: 32
+    h_mm: 32
+  metadata:
+    unit_code:
+      label: {x_mm: 150, y_mm: 28, w_mm: 25, align: right, font: SimSun, size_pt: 12}
+      value: {x_mm: 176, y_mm: 28, w_mm: 20, align: center, font: Times New Roman, size_pt: 12}
+    student_id:
+      label: {x_mm: 150, y_mm: 48, w_mm: 25, align: right, font: SimSun, size_pt: 12}
+      value: {x_mm: 176, y_mm: 48, w_mm: 25, align: center, font: Times New Roman, size_pt: 12}
+    classification:
+      label: {x_mm: 100, y_mm: 68, w_mm: 25, align: right, font: SimSun, size_pt: 12}
+      value: {x_mm: 128, y_mm: 68, w_mm: 25, align: center, font: Times New Roman, size_pt: 12}
+  wordmark:
+    x_mm: 28
+    y_mm: 92
+    w_mm: 150
+    h_mm: auto
+    no_border: true
+  thesis_type:
+    text: 毕业设计(论文)
+    x_mm: 0
+    y_mm: 132
+    w_mm: 210
+    align: center
+    font: SimHei
+    size_pt: 28
+  title:
+    line1:
+      x_mm: 0
+      y_mm: 185
+      w_mm: 210
+      align: center
+      font: SimHei
+      size_pt: 18
+    line2:
+      x_mm: 0
+      y_mm: 202
+      w_mm: 210
+      align: center
+      font: SimHei
+      size_pt: 18
+  bottom_fields:
+    start_y_mm: 240
+    row_height_mm: 12
+    label_x_mm: 42
+    label_w_mm: 35
+    value_x_mm: 80
+    value_w_mm: 85
+    underline: true
+    label_font: SimSun
+    label_size_pt: 14
+    value_font: SimSun
+    value_size_pt: 14
+  date:
+    x_mm: 0
+    y_mm: 276
+    w_mm: 210
+    align: center
+    font: SimSun
+    size_pt: 14
+
+spine:
+  textbox:
+    x_mm: 85
+    y_mm: 20
+    w_mm: 35
+    h_mm: 250
+    text_direction: tbRl
+    align: center
+    font: SimSun
+    size_pt: 14
+    line_spacing_pt: 20
+
+taskbook:
+  page: {top_margin_mm: 22, bottom_margin_mm: 20, left_margin_mm: 27, right_margin_mm: 24}
+  university: {text: 北京航空航天大学, y_mm: 20, font: SimSun, size_pt: 14, align: center}
+  title: {text: 本科毕业设计（论文）任务书, y_mm: 32, font: SimHei, size_pt: 16, align: center}
+  sections:
+    - {anchor: I, title: Ⅰ、毕业设计（论文）题目：, min_lines: 1}
+    - {anchor: II, title: Ⅱ、毕业设计（论文）使用的原始资料（数据）及设计技术要求：, min_lines: 5}
+    - {anchor: III, title: Ⅲ、毕业设计（论文）工作内容：, min_lines: 5}
+    - {anchor: IV, title: Ⅳ、主要参考资料：, min_lines: 4}
+  footer_fields:
+    - 学院
+    - 专业类
+    - 班级
+    - 学生
+    - 毕业设计（论文）时间
+    - 答辩时间
+    - 成绩
+    - 指导教师
+    - 系主任签字
+
+declaration:
+  page: {top_margin_mm: 28, bottom_margin_mm: 24, left_margin_mm: 30, right_margin_mm: 26}
+  title: {text: 本人声明, y_mm: 35, font: SimHei, size_pt: 16, align: center}
+  body:
+    x_mm: 30
+    y_mm: 70
+    w_mm: 154
+    font: SimSun
+    size_pt: 12
+    line_spacing_pt: 24
+    first_line_indent_chars: 2
+  signature:
+    x_mm: 118
+    y_mm: 185
+    w_mm: 62
+    rows: [作者, 签字, 时间]
+
+abstract_cn:
+  header:
+    logo_x_mm: 20
+    logo_y_mm: 10
+    logo_w_mm: 14
+    title_x_mm: 45
+    title_y_mm: 15
+    title_w_mm: 120
+    page_no_x_mm: 170
+    page_no_y_mm: 15
+    line_y_mm: 30
+  title: {y_mm: 45, font: SimHei, size_pt: 16, align: center}
+  author_block: {x_mm: 145, y_mm: 58, w_mm: 45, align: left, font: SimSun, size_pt: 12}
+  abstract_heading: {y_mm: 86, text: "摘    要", font: SimHei, size_pt: 16, align: center}
+  body:
+    x_mm: 25
+    y_mm: 105
+    w_mm: 160
+    font: SimSun
+    size_pt: 12
+    line_spacing_pt: 24
+    first_line_indent_chars: 2
+  keywords: {x_mm: 25, y_mm: 246, w_mm: 160, font: SimSun, size_pt: 12}
+
+abstract_en:
+  header:
+    logo_x_mm: 20
+    logo_y_mm: 10
+    logo_w_mm: 14
+    title_x_mm: 45
+    title_y_mm: 15
+    title_w_mm: 120
+    page_no_x_mm: 170
+    page_no_y_mm: 15
+    line_y_mm: 30
+  title: {y_mm: 45, font: Times New Roman, size_pt: 16, bold: true, align: center, max_lines: 2}
+  author_block: {x_mm: 132, y_mm: 66, w_mm: 58, align: right, font: Times New Roman, size_pt: 12}
+  abstract_heading: {y_mm: 92, text: Abstract, font: Times New Roman, size_pt: 16, bold: true, align: center}
+  body: {x_mm: 25, y_mm: 112, w_mm: 160, font: Times New Roman, size_pt: 12, line_spacing_pt: 24}
+  keywords: {x_mm: 25, y_mm: 246, w_mm: 160, font: Times New Roman, size_pt: 12, label_bold: true}
+
+toc:
+  title: {text: "目    录", y_mm: 42, font: SimHei, size_pt: 18, align: center}
+  entry:
+    font: SimSun
+    size_pt: 12
+    leader: dot
+    page_number_align: right
+  levels:
+    1: {indent_mm: 0}
+    2: {indent_mm: 7}
+    3: {indent_mm: 14}
